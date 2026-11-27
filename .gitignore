@@ -1,0 +1,9 @@
+bin/
+obj/
+publish/
+*.zip
+# Built from tap/TaskbarTap.cpp by tap/build.cmd
+tap/*.dll
+tap/*.obj
+tap/*.lib
+tap/*.exp

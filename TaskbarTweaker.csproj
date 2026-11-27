@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>TaskbarTweaker</AssemblyName>
+    <!-- TaskbarTap.dll is x64 and loads into explorer, so the app must be x64 too. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationDefaultFont>Segoe UI, 10pt</ApplicationDefaultFont>
+    <NoWarn>$(NoWarn);WFO5001</NoWarn> <!-- SetColorMode (dark mode) is still marked experimental -->
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tap\**" />
+    <None Include="tap\TaskbarTap.dll" Link="TaskbarTap.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+  <Target Name="BuildTap" BeforeTargets="BeforeBuild" Inputs="tap\TaskbarTap.cpp" Outputs="tap\TaskbarTap.dll">
+    <Exec Command="&quot;$(MSBuildProjectDirectory)\tap\build.cmd&quot;" />
+  </Target>
+</Project>
