@@ -34,6 +34,7 @@ internal sealed class SceneManagerDialog : Form
         int[]? rightModes, bool focusLens, string? secondaryTimeZoneId = null,
         IEnumerable<string>? visibleStackIds = null)
     {
+        RegisterCopy();
         this.current = current;
         this.rightModes = SceneSnapshot.NormalizeModes(rightModes);
         this.focusLens = focusLens;
@@ -113,6 +114,39 @@ internal sealed class SceneManagerDialog : Form
         sceneList.DisplayMember = nameof(SceneSnapshot.Name);
         if (sceneList.Items.Count > 0) sceneList.SelectedIndex = 0;
         else UpdateSelection();
+        loading = true;
+        try { Localization.Apply(this); }
+        finally { loading = false; }
+    }
+
+    static void RegisterCopy()
+    {
+        Localization.Register("winBar · Scenes", "winBar · Szenen");
+        Localization.Register("Scenes", "Szenen");
+        Localization.Register("A taskbar for every moment.", "Eine Taskleiste für jeden Moment.");
+        Localization.Register("Automatic rules are checked only when monitors or time changes.", "Automatische Regeln prüfen nur bei Monitor- oder Zeitwechsel.");
+        Localization.Register("Cancel", "Abbrechen");
+        Localization.Register("Save", "Speichern");
+        Localization.Register("Activate", "Aktivieren");
+        Localization.Register("Your scenes", "Deine Szenen");
+        Localization.Register("New from current layout", "Neu aus aktueller Ansicht");
+        Localization.Register("Delete", "Löschen");
+        Localization.Register("Use current layout", "Aktuelle Ansicht übernehmen");
+        Localization.Register("Activate automatically", "Automatisch aktivieren");
+        Localization.Register("Use a rule for this scene", "Regel für diese Szene verwenden");
+        Localization.Register("When at least this many monitors are connected", "Ab einer bestimmten Monitorzahl");
+        Localization.Register("At least", "Mindestens");
+        Localization.Register("Any monitor", "Beliebiger Monitor");
+        Localization.Register("Specific monitor", "Bestimmter Monitor");
+        Localization.Register("Only at certain times", "Nur zu bestimmten Zeiten");
+        Localization.Register("From", "Von");
+        Localization.Register("Until", "Bis");
+        Localization.Register("Every day", "Jeden Tag");
+        Localization.Register("Mon–Fri", "Mo–Fr");
+        Localization.Register("Sat–Sun", "Sa–So");
+        Localization.Register("Days", "Tage");
+        Localization.Register("Without a rule, switch scenes manually. Time ranges may cross midnight.",
+            "Ohne Regel wechselst du Szenen manuell. Zeitfenster dürfen über Mitternacht gehen.");
     }
 
     void BuildSceneList(TableLayoutPanel body)
@@ -245,7 +279,7 @@ internal sealed class SceneManagerDialog : Form
 
     void AddScene()
     {
-        var name = $"Szene {Scenes.Count + 1}";
+        var name = $"{Localization.T("Scene", "Szene")} {Scenes.Count + 1}";
         var scene = SceneSnapshot.Capture(name, current, rightModes, focusLens, secondaryTimeZoneId, visibleStackIds,
             current.MonitorLayouts);
         Scenes.Add(scene);

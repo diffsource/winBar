@@ -18,13 +18,13 @@ internal static class ThemeCatalog
 {
     static readonly List<ThemeDefinition> themes =
     [
-        new("glass", "Glass", "Kühles Rauchglas", 4, unchecked((int)0xA02A405A), false, true, 2,
+        new("glass", "Glass", "Cool smoked glass", 4, unchecked((int)0xA02A405A), false, true, 2,
             Color.FromArgb(39, 56, 78), Color.FromArgb(134, 165, 197), Color.FromArgb(154, 198, 246)),
-        new("glacier", "Glacier", "Weiches Milchglas", 3, unchecked((int)0xB05D7895), false, true, 2,
+        new("glacier", "Glacier", "Soft frosted glass", 3, unchecked((int)0xB05D7895), false, true, 2,
             Color.FromArgb(70, 91, 116), Color.FromArgb(169, 192, 215), Color.FromArgb(217, 235, 250)),
-        new("ink", "Ink", "Dunkles, klares Grau", 2, unchecked((int)0xE8172435), false, false, 2,
+        new("ink", "Ink", "Dark, crisp gray", 2, unchecked((int)0xE8172435), false, false, 2,
             Color.FromArgb(26, 35, 49), Color.FromArgb(55, 72, 95), Color.FromArgb(176, 204, 239)),
-        new("adaptive", "Adaptive", "Passt sich Windows an", 3, unchecked((int)0xA02A405A), true, true, 2,
+        new("adaptive", "Adaptive", "Adapts to Windows", 3, unchecked((int)0xA02A405A), true, true, 2,
             Color.FromArgb(42, 58, 83), Color.FromArgb(91, 124, 169), Color.FromArgb(183, 214, 255)),
     ];
 

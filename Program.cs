@@ -11,7 +11,6 @@ static class Program
         if (ReleaseUpdater.LaunchStagedUpdate(args)) return;
         Debug.Assert(Taskbar.ToAbgr(unchecked((int)0x80112233)) == unchecked((int)0x80332211));
         ApplicationConfiguration.Initialize();
-        Application.SetColorMode(SystemColorMode.System); // follow Windows light/dark setting
         if (args.Contains("--folders")) { FolderStackTaskbarLauncher.RunPopup(); return; }
         Application.Run(new MainForm(args.Contains("--tray")));
     }
@@ -248,6 +247,7 @@ class Settings
     public List<SavedProfile?> Profiles { get; set; } = [null, null];
     public bool WelcomeSeen { get; set; }
     public bool AutoUpdates { get; set; } = true;
+    public string Language { get; set; } = Localization.English;
     public AppStackConfig AppStacks { get; set; } = new();
     public List<string> FolderStackPaths { get; set; } = [];
     public List<string> SharedThemes { get; set; } = [];
@@ -272,6 +272,7 @@ class Settings
             s.FolderStackPaths ??= [];
             s.PresentationHiddenPrograms ??= [];
             s.SharedThemes ??= [];
+            s.Language ??= Localization.English;
             s.Scenes ??= [];
             s.SceneRules ??= [];
             s.Workspaces ??= [];
@@ -365,7 +366,9 @@ class MainForm : Form
     readonly ProgramHider programHider = new();
     ReleaseUpdater? updater;
     readonly NotifyIcon tray;
-    readonly TableLayoutPanel grid = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(16, 4, 24, 16) };
+    readonly SettingsShell settingsShell;
+    readonly HashSet<string> builtPages = new(StringComparer.Ordinal);
+    TableLayoutPanel grid = null!;
     bool startHidden, exiting, reverting, openHotkeyWasDown, pinnedRevealed, rightRevealed, lastPinnedHidden, lastMaximized, updaterStarted;
     bool presentationMode, presentationHotkeyWasDown, folderHotkeyWasDown;
     CheckBox? presentationToggle;
@@ -452,15 +455,15 @@ class MainForm : Form
     public MainForm(bool startHidden)
     {
         this.startHidden = startHidden;
-        Text = "winBar · Einstellungen";
-        ClientSize = new Size(LogicalToDeviceUnits(580), Math.Min(LogicalToDeviceUnits(760), Screen.PrimaryScreen!.WorkingArea.Height * 9 / 10));
-        MinimumSize = new Size(LogicalToDeviceUnits(480), LogicalToDeviceUnits(400));
+        Localization.Configure(s.Language);
+        MainSettingsTranslations.Register();
+        settingsShell = new SettingsShell();
+        Text = Localization.T("winBar · Settings", "winBar · Einstellungen");
+        ClientSize = new Size(LogicalToDeviceUnits(960), Math.Min(LogicalToDeviceUnits(700), Screen.PrimaryScreen!.WorkingArea.Height * 9 / 10));
+        MinimumSize = new Size(LogicalToDeviceUnits(740), LogicalToDeviceUnits(500));
         StartPosition = FormStartPosition.CenterScreen;
         Icon = SystemIcons.Application;
-        // Percent, not AutoSize: spanning checkboxes would otherwise widen the caption column.
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-        Controls.Add(grid);
+        Controls.Add(settingsShell);
         altButton = new AltSettingsButton(OpenWindow);
         mediaRail = new MediaRail(this);
 
@@ -535,7 +538,13 @@ class MainForm : Form
         var alpha = new TrackBar { Minimum = 0, Maximum = 255, TickFrequency = 32, Value = (s.Color >> 24) & 0xFF };
         alpha.ValueChanged += (_, _) => { if (reverting) return; s.Color = (alpha.Value << 24) | (s.Color & 0xFFFFFF); s.Save(); ShowAlpha(); nextVisualRefresh = 0; };
         Add(alpha, alphaLbl);
-        style.SelectedIndexChanged += (_, _) => { if (reverting) return; s.Style = style.SelectedIndex; s.Save(); ShowStyle(); nextVisualRefresh = 0; };
+        style.SelectedIndexChanged += (_, _) =>
+        {
+            if (reverting) return;
+            s.Style = style.SelectedIndex;
+            if (s.Style == 4) NormalizeAcrylicColor();
+            s.Save(); ShowStyle(); nextVisualRefresh = 0;
+        };
         ShowColor(); ShowAlpha(); ShowStyle();
 
         void ShowColor()
@@ -543,9 +552,17 @@ class MainForm : Form
             var c = Color.FromArgb(s.Color | unchecked((int)0xFF000000));
             colorBtn.BackColor = c;
             colorBtn.ForeColor = c.GetBrightness() > 0.5f ? Color.Black : Color.White;
-            colorBtn.Text = $"#{c.R:X2}{c.G:X2}{c.B:X2}  –  ändern…";
+            colorBtn.Text = $"#{c.R:X2}{c.G:X2}{c.B:X2}  –  {Localization.T("change…", "ändern…")}";
         }
-        void ShowAlpha() => alphaLbl.Text = $"Deckkraft  {alpha.Value * 100 / 255} %";
+        void ShowAlpha() => alphaLbl.Text = $"{Localization.T("Opacity", "Deckkraft")}  {alpha.Value * 100 / 255} %";
+        void NormalizeAcrylicColor()
+        {
+            int color = MonitorAccent.EnsureAcrylicColor(s.Color);
+            if (color == s.Color) return;
+            s.Color = color;
+            alpha.Value = (color >> 24) & 0xFF;
+            ShowColor(); ShowAlpha();
+        }
         // Only Farbe/Blur/Acrylic use the color; "transparent" always sends 0.
         void ShowStyle()
         {
@@ -585,7 +602,13 @@ class MainForm : Form
         var maximizedStyle = Combo("Stil bei maximiertem Fenster", ["Standard", "Transparent", "Farbe (getönt)", "Blur", "Acrylic"], s.MaximizedStyle);
         maximizedStyle.Enabled = s.ContextStyle;
         contextStyle.CheckedChanged += (_, _) => { if (reverting) return; s.ContextStyle = contextStyle.Checked; maximizedStyle.Enabled = s.ContextStyle; s.Save(); nextVisualRefresh = 0; };
-        maximizedStyle.SelectedIndexChanged += (_, _) => { if (reverting) return; s.MaximizedStyle = maximizedStyle.SelectedIndex; s.Save(); nextVisualRefresh = 0; };
+        maximizedStyle.SelectedIndexChanged += (_, _) =>
+        {
+            if (reverting) return;
+            s.MaximizedStyle = maximizedStyle.SelectedIndex;
+            if (s.MaximizedStyle == 4) NormalizeAcrylicColor();
+            s.Save(); nextVisualRefresh = 0;
+        };
 
         Header("Verhalten");
         var autoHide = Check("Automatisch ausblenden", Taskbar.AutoHide);
@@ -601,7 +624,7 @@ class MainForm : Form
         Add(cleanButton, Caption("Clean-Profil"));
         Add(new Label { Text = "Blendet Suche, Widgets, Aufgabenansicht, Badges und Tray-Symbole gemeinsam aus. Ein zweiter Klick stellt deine vorherigen Werte wieder her.", AutoSize = true, ForeColor = SystemColors.GrayText });
 
-        Header("Uhr und Programme");
+        Header("Uhr und Medien");
         var clockLayout = Combo("Design-Uhr", ["Aus", "Nur Uhrzeit", "Uhrzeit und Datum"], s.ClockLayout);
         clockLayout.SelectedIndexChanged += (_, _) =>
         {
@@ -627,6 +650,8 @@ class MainForm : Form
         };
         var mediaToggle = Check("Schmale Musik-Leiste bei Wiedergabe zeigen", s.ShowMediaRail);
         mediaToggle.CheckedChanged += (_, _) => { if (reverting) return; s.ShowMediaRail = mediaToggle.Checked; s.Save(); mediaRail.Update(s.ShowMediaRail, s.HideTaskbar); };
+
+        Header("Apps");
         var pinned = Check("Angeheftete Apps erst mit Alt zeigen (experimentell)", s.HidePinnedUntilAlt);
         var favorites = Combo("Immer sichtbar", ["Keine", "Erstes Symbol", "Erste 2 Symbole", "Erste 3 Symbole", "Erste 4 Symbole", "Erste 5 Symbole"], s.KeepPinnedCount);
         favorites.Enabled = s.HidePinnedUntilAlt;
@@ -781,7 +806,9 @@ class MainForm : Form
         void UpdateCleanUi()
         {
             bool active = s.CleanBackup != null;
-            cleanButton.Text = active ? "Vorherige Ansicht wiederherstellen" : "Clean-Profil aktivieren";
+            cleanButton.Text = active
+                ? Localization.T("Restore previous view", "Vorherige Ansicht wiederherstellen")
+                : Localization.T("Activate clean profile", "Clean-Profil aktivieren");
             foreach (var control in cleanControls) control.Enabled = !active;
         }
         void ToggleClean()
@@ -834,8 +861,8 @@ class MainForm : Form
         var profileStatus = new Label { AutoSize = true, ForeColor = SystemColors.GrayText };
         Add(profileStatus);
         void ShowProfileStatus() => profileStatus.Text = s.Profiles[profileSlot.SelectedIndex] == null
-            ? "Noch kein Profil in diesem Platz gespeichert."
-            : "Gespeichert · Strg+Alt+1 für Arbeit, Strg+Alt+2 für Privat";
+            ? Localization.T("Nothing saved in this slot yet.", "Noch kein Profil in diesem Platz gespeichert.")
+            : Localization.T("Saved · Ctrl+Alt+1 for Work, Ctrl+Alt+2 for Personal", "Gespeichert · Strg+Alt+1 für Arbeit, Strg+Alt+2 für Privat");
         profileSlot.SelectedIndexChanged += (_, _) => ShowProfileStatus();
         ShowProfileStatus();
         var profileButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty };
@@ -1113,7 +1140,8 @@ class MainForm : Form
         var autoUpdates = Check("Neue Releases automatisch im Hintergrund laden", s.AutoUpdates);
         var updateStatus = new Label
         {
-            Text = $"Version {typeof(Program).Assembly.GetName().Version?.ToString(3)} · Neue Versionen starten beim nächsten Öffnen.",
+            Text = Localization.T($"Version {typeof(Program).Assembly.GetName().Version?.ToString(3)} · New versions start the next time you open winBar.",
+                $"Version {typeof(Program).Assembly.GetName().Version?.ToString(3)} · Neue Versionen starten beim nächsten Öffnen."),
             AutoSize = true, MaximumSize = new Size(LogicalToDeviceUnits(520), 0), ForeColor = SystemColors.GrayText
         };
         Add(updateStatus);
@@ -1126,10 +1154,11 @@ class MainForm : Form
         }, () => s.AutoUpdates);
         autoUpdates.CheckedChanged += (_, _) =>
         {
+            if (reverting) return;
             s.AutoUpdates = autoUpdates.Checked;
             s.Save();
             if (s.AutoUpdates && updater != null) _ = updater.CheckNowAsync(false);
-            else { ReleaseUpdater.DiscardReadyUpdate(); updateStatus.Text = "Automatische Updates ausgeschaltet."; }
+            else { ReleaseUpdater.DiscardReadyUpdate(); updateStatus.Text = Localization.T("Automatic updates disabled.", "Automatische Updates ausgeschaltet."); }
         };
 
         var menu = new ContextMenuStrip();
@@ -1161,10 +1190,37 @@ class MainForm : Form
                 });
             }
             workspaceMenu.Enabled = workspaceMenu.DropDownItems.Count > 0;
+            Localization.Apply(menu);
         };
         menu.Items.Add("Beenden", null, (_, _) => ExitApp());
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "winBar", Visible = true, ContextMenuStrip = menu };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenWindow(); };
+
+        settingsShell.LanguageChoice.SelectedIndex = s.Language switch
+        {
+            Localization.German => 1,
+            Localization.System => 2,
+            _ => 0
+        };
+        settingsShell.LanguageChoice.SelectedIndexChanged += (_, _) =>
+        {
+            if (reverting) return;
+            s.Language = settingsShell.LanguageChoice.SelectedIndex switch
+            {
+                1 => Localization.German,
+                2 => Localization.System,
+                _ => Localization.English
+            };
+            s.Save();
+            Localization.Configure(s.Language);
+            reverting = true;
+            try { Localization.Apply(this); Localization.Apply(menu); themePicker.RefreshThemes(); }
+            finally { reverting = false; }
+            ShowColor(); ShowAlpha(); ShowProfileStatus(); UpdateCleanUi();
+        };
+        reverting = true;
+        try { Localization.Apply(this); Localization.Apply(menu); }
+        finally { reverting = false; }
 
         // Poll only the Alt interaction frequently. The Explorer style and window list need less frequent work.
         timer.Tick += (_, _) =>
@@ -1477,7 +1533,13 @@ class MainForm : Form
     // Without a caption the control spans both columns; with one, caption left and control stretched right.
     void Add(Control c, Label? caption = null)
     {
-        if (caption == null) { grid.Controls.Add(c); grid.SetColumnSpan(c, 2); return; }
+        if (caption == null)
+        {
+            if (c is Label label && label.MaximumSize.Width == 0) label.MaximumSize = new Size(LogicalToDeviceUnits(640), 0);
+            if (c is CheckBox check) check.MaximumSize = new Size(LogicalToDeviceUnits(640), 0);
+            grid.Controls.Add(c); grid.SetColumnSpan(c, 2); return;
+        }
+        caption.MaximumSize = new Size(LogicalToDeviceUnits(240), 0);
         grid.Controls.Add(caption);
         c.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         grid.Controls.Add(c);
@@ -1485,8 +1547,33 @@ class MainForm : Form
 
     static Label Caption(string text) => new() { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 6, 16, 6) };
 
-    void Header(string text) =>
-        Add(new Label { Text = text, AutoSize = true, Font = new Font(Font.FontFamily, 13, FontStyle.Bold), Margin = new Padding(0, 18, 3, 6) });
+    void Header(string text)
+    {
+        var (key, pageEn, pageDe, descriptionEn, descriptionDe, sectionEn) = text switch
+        {
+            "Aussehen" => ("appearance", "Appearance", "Aussehen", "Themes, color and glass effects", "Designs, Farben und Glaseffekte", "Appearance"),
+            "Verhalten" => ("taskbar", "Taskbar", "Taskleiste", "Visibility and Windows controls", "Sichtbarkeit und Windows-Elemente", "Behavior"),
+            "Elemente" => ("taskbar", "Taskbar", "Taskleiste", "Visibility and Windows controls", "Sichtbarkeit und Windows-Elemente", "Windows elements"),
+            "Uhr und Medien" => ("clock", "Clock and media", "Uhr und Medien", "Time, time zones and playback", "Uhrzeit, Zeitzonen und Wiedergabe", "Clock and media"),
+            "Apps" => ("apps", "Apps and focus", "Apps und Fokus", "Pins, stacks, privacy and focus", "Pins, Stapel, Privatsphäre und Fokus", "Apps and focus"),
+            "Rechter Bereich" => ("right", "System area", "Rechter Bereich", "Clock, Quick Settings and tray icons", "Uhr, Schnelleinstellungen und Tray-Icons", "System area"),
+            "Profile" => ("layouts", "Layouts", "Layouts", "Profiles, scenes, monitors and workspaces", "Profile, Szenen, Monitore und Arbeitsbereiche", "Profiles"),
+            "Szenen" => ("layouts", "Layouts", "Layouts", "Profiles, scenes, monitors and workspaces", "Profile, Szenen, Monitore und Arbeitsbereiche", "Scenes"),
+            "Monitore" => ("layouts", "Layouts", "Layouts", "Profiles, scenes, monitors and workspaces", "Profile, Szenen, Monitore und Arbeitsbereiche", "Monitors"),
+            "Arbeitsbereiche" => ("layouts", "Layouts", "Layouts", "Profiles, scenes, monitors and workspaces", "Profile, Szenen, Monitore und Arbeitsbereiche", "Workspaces"),
+            "Aktionen" => ("system", "System", "System", "Updates, startup and maintenance", "Updates, Autostart und Wartung", "Actions"),
+            "Updates" => ("system", "System", "System", "Updates, startup and maintenance", "Updates, Autostart und Wartung", "Updates"),
+            _ => throw new ArgumentOutOfRangeException(nameof(text), text, "Unknown settings section")
+        };
+        grid = settingsShell.AddPage(key, pageEn, pageDe, descriptionEn, descriptionDe);
+        if (!builtPages.Add(key))
+            Add(new Label
+            {
+                Text = Localization.T(sectionEn, text), AutoSize = true,
+                Font = new Font("Segoe UI Semibold", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(40, 72, 120), Margin = new Padding(0, 22, 3, 8)
+            });
+    }
 
     ComboBox Combo(string label, string[] items, int sel)
     {

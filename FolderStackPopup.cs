@@ -49,7 +49,7 @@ sealed class FolderStackPopup : Form
     FolderStackPopup(string[] folders, Rectangle anchor)
     {
         this.anchor = anchor;
-        Text = "Ordnerstapel";
+        Text = Localization.T("Folder shelf", "Ordnerstapel");
         ClientSize = new Size(478, 326);
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
@@ -65,17 +65,17 @@ sealed class FolderStackPopup : Form
 
         Controls.Add(new Label
         {
-            Text = "Ordnerstapel", Font = new Font("Segoe UI Semibold", 16, FontStyle.Bold),
+            Text = Localization.T("Folder shelf", "Ordnerstapel"), Font = new Font("Segoe UI Semibold", 16, FontStyle.Bold),
             ForeColor = Color.White, Location = new Point(23, 15), Size = new Size(320, 33)
         });
         Controls.Add(new Label
         {
-            Text = "Deine Ordner, ein Klick entfernt", ForeColor = Color.FromArgb(171, 193, 225),
+            Text = Localization.T("Your folders, one click away", "Deine Ordner, ein Klick entfernt"), ForeColor = Color.FromArgb(171, 193, 225),
             Location = new Point(25, 48), Size = new Size(360, 25)
         });
         var close = new Button
         {
-            Text = "×", AccessibleName = "Ordnerstapel schließen", Location = new Point(431, 20), Size = new Size(28, 28),
+            Text = "×", AccessibleName = Localization.T("Close folder shelf", "Ordnerstapel schließen"), Location = new Point(431, 20), Size = new Size(28, 28),
             FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(42, 58, 80), ForeColor = Color.White, TabStop = true
         };
         close.FlatAppearance.BorderSize = 0;
@@ -92,7 +92,7 @@ sealed class FolderStackPopup : Form
         {
             grid.Controls.Add(new Label
             {
-                Text = "Noch keine Ordner ausgewählt. Füge sie in den winBar-Einstellungen hinzu.",
+                Text = Localization.T("No folders selected yet. Add some in winBar settings.", "Noch keine Ordner ausgewählt. Füge sie in den winBar-Einstellungen hinzu."),
                 ForeColor = Color.FromArgb(171, 193, 225), Size = new Size(390, 72), Margin = new Padding(10, 20, 0, 0)
             });
         }
@@ -103,7 +103,7 @@ sealed class FolderStackPopup : Form
             var tile = new Button
             {
                 Text = name,
-                AccessibleName = $"Ordner {name} öffnen",
+                AccessibleName = Localization.T($"Open folder {name}", $"Ordner {name} öffnen"),
                 Size = new Size(99, 92), Margin = new Padding(3), Padding = new Padding(4),
                 FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(40, 55, 77), ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9), TextAlign = ContentAlignment.BottomCenter,
@@ -116,7 +116,7 @@ sealed class FolderStackPopup : Form
             {
                 try { Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true }); }
                 catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
-                { MessageBox.Show(this, $"Ordner konnte nicht geöffnet werden:\n{ex.Message}", "winBar", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+                { MessageBox.Show(this, Localization.T($"Could not open folder:\n{ex.Message}", $"Ordner konnte nicht geöffnet werden:\n{ex.Message}"), "winBar", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
                 Close();
             };
             grid.Controls.Add(tile);

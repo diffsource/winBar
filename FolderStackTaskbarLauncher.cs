@@ -12,7 +12,8 @@ static class FolderStackTaskbarLauncher
         string directory = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
         Directory.CreateDirectory(directory);
         string shortcutPath = Path.Combine(directory, "winBar Ordnerstapel.lnk");
-        var shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException("Windows Script Host ist nicht verfügbar.");
+        var shellType = Type.GetTypeFromProgID("WScript.Shell") ?? throw new InvalidOperationException(
+            Localization.T("Windows Script Host is unavailable.", "Windows Script Host ist nicht verfügbar."));
         object shell = Activator.CreateInstance(shellType)!;
         object? shortcut = null;
         try
@@ -23,7 +24,7 @@ static class FolderStackTaskbarLauncher
             Set("TargetPath", exe);
             Set("Arguments", "--folders");
             Set("WorkingDirectory", Path.GetDirectoryName(exe)!);
-            Set("Description", "winBar-Ordnerstapel öffnen");
+            Set("Description", Localization.T("Open winBar folder shelf", "winBar-Ordnerstapel öffnen"));
             Set("IconLocation", Path.Combine(Environment.SystemDirectory, "shell32.dll") + ",3");
             type.InvokeMember("Save", System.Reflection.BindingFlags.InvokeMethod, null, shortcut, null);
         }
@@ -42,7 +43,13 @@ static class FolderStackTaskbarLauncher
 
     sealed class PopupContext : ApplicationContext
     {
-        public PopupContext() => Application.Idle += OpenOnIdle;
+        readonly Settings settings = Settings.Load();
+
+        public PopupContext()
+        {
+            Localization.Configure(settings.Language);
+            Application.Idle += OpenOnIdle;
+        }
 
         void OpenOnIdle(object? sender, EventArgs e)
         {
@@ -60,7 +67,7 @@ static class FolderStackTaskbarLauncher
             {
                 bar = new Rectangle(Math.Clamp(pointer.X - 24, bar.Left, bar.Right - 48), bar.Top, 48, bar.Height);
             }
-            FolderStackPopup.ShowFolders(Settings.Load().FolderStackPaths, bar);
+            FolderStackPopup.ShowFolders(settings.FolderStackPaths, bar);
             var popup = Application.OpenForms.OfType<FolderStackPopup>().LastOrDefault();
             if (popup == null) ExitThread();
             else popup.FormClosed += (_, _) => ExitThread();

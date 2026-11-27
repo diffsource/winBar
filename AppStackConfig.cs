@@ -57,7 +57,7 @@ sealed class AppStackConfig
     {
         if (Groups == null || Groups.Count > 4)
         {
-            reason = "Du kannst höchstens vier Stapel anlegen.";
+            reason = Localization.T("You can create up to four stacks.", "Du kannst höchstens vier Stapel anlegen.");
             return false;
         }
         var occupied = new bool[32];
@@ -68,12 +68,14 @@ sealed class AppStackConfig
             int count = group.Count;
             if (start < 0 || start >= 32 || count < 2 || count > 31 || start + count > 32)
             {
-                reason = $"{group.Name}: Position oder Anzahl liegt außerhalb der ersten 32 Apps.";
+                reason = Localization.T($"{group.Name}: position or count exceeds the first 32 apps.",
+                    $"{group.Name}: Position oder Anzahl liegt außerhalb der ersten 32 Apps.");
                 return false;
             }
             if (Enumerable.Range(start, count).Any(index => occupied[index]))
             {
-                reason = $"{group.Name}: Der Bereich überschneidet sich mit einem anderen Stapel.";
+                reason = Localization.T($"{group.Name}: range overlaps another stack.",
+                    $"{group.Name}: Der Bereich überschneidet sich mit einem anderen Stapel.");
                 return false;
             }
             for (int i = start; i < start + count; i++) occupied[i] = true;
@@ -87,7 +89,7 @@ sealed class AppStackGroup
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public bool Enabled { get; set; } = true;
-    public string Name { get; set; } = "Stapel";
+    public string Name { get; set; } = Localization.T("Stack", "Stapel");
     public int Start { get; set; } = 1; // 1-based position in Windows pin order
     public int Count { get; set; } = 2;
     public List<string> LaunchPaths { get; set; } = [];

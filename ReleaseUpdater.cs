@@ -111,7 +111,7 @@ sealed class ReleaseUpdater
         bool stagedSuccessfully = false;
         try
         {
-            report("Suche nach GitHub-Releases…");
+            report(Localization.T("Checking GitHub releases…", "Suche nach GitHub-Releases…"));
             using var response = await Client.GetAsync(ApiUrl, HttpCompletionOption.ResponseHeadersRead, stop.Token).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             await using var body = await response.Content.ReadAsStreamAsync(stop.Token).ConfigureAwait(false);
@@ -120,14 +120,15 @@ sealed class ReleaseUpdater
             if (!TryVersion(root.GetProperty("tag_name").GetString(), out var version)) throw new InvalidDataException("Invalid release version.");
             if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean() || version <= CurrentVersion)
             {
-                report($"Aktuell · v{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Build}");
+                report(Localization.T($"Up to date · v{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Build}",
+                    $"Aktuell · v{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Build}"));
                 return;
             }
             var ready = ReadReady();
             if (ready != null && TryVersion(ready.Version, out var stagedVersion) && stagedVersion >= version &&
                 File.Exists(Path.Combine(Root, ready.Folder, "TaskbarTweaker.exe")))
             {
-                report($"Update {ready.Version} ist beim nächsten Start bereit.");
+                report(Localization.T($"Update {ready.Version} is ready for the next start.", $"Update {ready.Version} ist beim nächsten Start bereit."));
                 return;
             }
             var asset = root.GetProperty("assets").EnumerateArray()
@@ -140,7 +141,8 @@ sealed class ReleaseUpdater
                 digest == null || !Regex.IsMatch(digest, "^sha256:[0-9a-fA-F]{64}$"))
                 throw new InvalidDataException("Release asset cannot be verified.");
 
-            report($"Lade v{version.Major}.{version.Minor}.{version.Build} im Hintergrund…");
+            report(Localization.T($"Downloading v{version.Major}.{version.Minor}.{version.Build} in the background…",
+                $"Lade v{version.Major}.{version.Minor}.{version.Build} im Hintergrund…"));
             Directory.CreateDirectory(Root);
             var folder = $"v{version.Major}.{version.Minor}.{version.Build}-{Guid.NewGuid():N}";
             var directory = Path.Combine(Root, folder);
@@ -184,13 +186,14 @@ sealed class ReleaseUpdater
             File.WriteAllText(marker, JsonSerializer.Serialize(new ReadyUpdate($"v{version.Major}.{version.Minor}.{version.Build}", folder)));
             File.Move(marker, ReadyFile, true);
             stagedSuccessfully = true;
-            report($"Update v{version.Major}.{version.Minor}.{version.Build} ist beim nächsten Start bereit.");
+            report(Localization.T($"Update v{version.Major}.{version.Minor}.{version.Build} is ready for the next start.",
+                $"Update v{version.Major}.{version.Minor}.{version.Build} ist beim nächsten Start bereit."));
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or JsonException or UnauthorizedAccessException or TaskCanceledException or FormatException or KeyNotFoundException)
         {
-            if (manual) report($"Update-Prüfung fehlgeschlagen: {ex.Message}");
-            else report("Update-Prüfung nicht möglich. Später erneut.");
+            if (manual) report(Localization.T($"Update check failed: {ex.Message}", $"Update-Prüfung fehlgeschlagen: {ex.Message}"));
+            else report(Localization.T("Could not check for updates. Try again later.", "Update-Prüfung nicht möglich. Später erneut."));
         }
         finally
         {

@@ -11,16 +11,23 @@ sealed class WelcomeForm : Form
     readonly TaskbarPreview preview = new();
     int step;
 
-    static readonly (string Heading, string Description, string Hint)[] Pages =
+    static readonly (string Heading, string Description, string Hint)[] GermanPages =
     [
         ("Eine ruhigere Taskleiste", "Wähle Glass, Glacier, Ink oder Adaptive. Weniger Ablenkung lässt mehr Platz für das, was du gerade tust.", "Unter Aussehen kannst du den Look jederzeit ändern."),
         ("Wichtiges bleibt griffbereit", "Halte Alt über der Taskleiste: Der Einstellungen-Button und weitere Icons erscheinen bei Bedarf.", "Strg + Alt + S öffnet die Einstellungen auch bei versteckter Taskleiste."),
         ("Dein Setup, ein Klick", "Gruppiere Apps in Stapeln, speichere Fenster als Arbeitsbereich und gestalte jeden Monitor für sich. Alles bleibt lokal.", "Starte mit einem Design. Stapel, Arbeitsbereiche und Monitore kannst du später einrichten.")
     ];
+    static readonly (string Heading, string Description, string Hint)[] EnglishPages =
+    [
+        ("A calmer taskbar", "Choose Glass, Glacier, Ink or Adaptive. Less clutter leaves more room for what you're doing.", "You can change the look anytime under Appearance."),
+        ("Keep essentials close", "Hold Alt over the taskbar: the settings button and extra icons appear when you need them.", "Ctrl + Alt + S opens settings even when the taskbar is hidden."),
+        ("Your setup, one click away", "Group apps into stacks, save windows as a workspace, and customize each monitor. Everything stays local.", "Start with a theme. You can set up stacks, workspaces and monitors later.")
+    ];
+    static (string Heading, string Description, string Hint)[] Pages => Localization.IsGerman ? GermanPages : EnglishPages;
 
     public WelcomeForm()
     {
-        Text = "Willkommen bei winBar";
+        Text = Localization.T("Welcome to winBar", "Willkommen bei winBar");
         ClientSize = new Size(620, 480);
         MinimumSize = MaximumSize = Size;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -40,7 +47,7 @@ sealed class WelcomeForm : Form
         hero.Controls.Add(brand);
         var brandDetail = new Label
         {
-            Text = "Mehr Raum für das Wesentliche.", ForeColor = Color.FromArgb(173, 195, 228),
+            Text = Localization.T("More room for what matters.", "Mehr Raum für das Wesentliche."), ForeColor = Color.FromArgb(173, 195, 228),
             AutoSize = true, Location = new Point(38, 65)
         };
         hero.Controls.Add(brandDetail);
@@ -71,13 +78,13 @@ sealed class WelcomeForm : Form
         hint.Size = new Size(540, 50);
         Controls.Add(hint);
 
-        back.Text = "Zurück";
+        back.Text = Localization.T("Back", "Zurück");
         back.Location = new Point(36, 430);
         back.Size = new Size(92, 34);
         back.Click += (_, _) => { step--; RefreshPage(); };
         Controls.Add(back);
 
-        var skip = new Button { Text = "Später", Location = new Point(340, 430), Size = new Size(125, 34), FlatStyle = FlatStyle.Flat };
+        var skip = new Button { Text = Localization.T("Later", "Später"), Location = new Point(340, 430), Size = new Size(125, 34), FlatStyle = FlatStyle.Flat };
         skip.FlatAppearance.BorderSize = 0;
         skip.Click += (_, _) => Close();
         Controls.Add(skip);
@@ -97,12 +104,12 @@ sealed class WelcomeForm : Form
 
     void RefreshPage()
     {
-        stepLabel.Text = $"Schritt {step + 1} von {Pages.Length}";
+        stepLabel.Text = Localization.T($"Step {step + 1} of {Pages.Length}", $"Schritt {step + 1} von {Pages.Length}");
         heading.Text = Pages[step].Heading;
         description.Text = Pages[step].Description;
         hint.Text = Pages[step].Hint;
         back.Enabled = step > 0;
-        next.Text = step == Pages.Length - 1 ? "Fertig" : "Weiter";
+        next.Text = step == Pages.Length - 1 ? Localization.T("Done", "Fertig") : Localization.T("Next", "Weiter");
         preview.SetStep(step);
     }
 
@@ -111,7 +118,7 @@ sealed class WelcomeForm : Form
         int step;
         public void SetStep(int value) { step = value; Invalidate(); }
 
-        public TaskbarPreview() { DoubleBuffered = true; AccessibleName = "Vorschau einer aufgeräumten Windows-Taskleiste"; }
+        public TaskbarPreview() { DoubleBuffered = true; AccessibleName = Localization.T("Preview of a clean Windows taskbar", "Vorschau einer aufgeräumten Windows-Taskleiste"); }
 
         protected override void OnPaint(PaintEventArgs e)
         {

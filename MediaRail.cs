@@ -278,7 +278,7 @@ sealed class MediaRail : IDisposable
             using var titleFont = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
             using var artistFont = new Font("Segoe UI", 8.5f);
             var flags = TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.VerticalCenter;
-            TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(title) ? "Wiedergabe" : title, titleFont,
+            TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(title) ? Localization.T("Now playing", "Wiedergabe") : title, titleFont,
                 new Rectangle(17, 16, 193, 26), Color.White, flags);
             TextRenderer.DrawText(e.Graphics, artist, artistFont, new Rectangle(17, 43, 193, 21), Color.FromArgb(171, 193, 225), flags);
             using var controlFill = new SolidBrush(Color.FromArgb(57, 83, 119));

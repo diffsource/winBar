@@ -3,7 +3,7 @@ internal sealed class SceneSnapshot
 {
     public int Version { get; set; } = 1;
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    public string Name { get; set; } = "Neue Szene";
+    public string Name { get; set; } = Localization.T("New scene", "Neue Szene");
     public string? ThemeId { get; set; }
     public int Style { get; set; }
     public int Color { get; set; }
@@ -62,7 +62,7 @@ internal sealed class SceneSnapshot
     // Root can apply the returned options to features implemented outside Settings.
     public SceneOptions ApplyTo(Settings settings)
     {
-        if (Version != 1) throw new InvalidDataException("Unbekannte Szenen-Version.");
+        if (Version != 1) throw new InvalidDataException(Localization.T("Unknown scene version.", "Unbekannte Szenen-Version."));
         settings.Style = Math.Clamp(Style, 0, 4);
         settings.Color = Color;
         settings.AutoContrast = AutoContrast;
@@ -90,7 +90,7 @@ internal sealed class SceneSnapshot
         var value = name?.Trim() ?? "";
         return value.Length switch
         {
-            0 => "Neue Szene",
+            0 => Localization.T("New scene", "Neue Szene"),
             > 32 => value[..32],
             _ => value
         };

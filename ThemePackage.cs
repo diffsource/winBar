@@ -30,17 +30,17 @@ internal sealed class ThemePackage
 
     public static ThemeDefinition Import(string json)
     {
-        if (json.Length > 16 * 1024) throw new InvalidDataException("Design-Datei ist zu groß.");
+        if (json.Length > 16 * 1024) throw new InvalidDataException(Localization.T("Theme file is too large.", "Design-Datei ist zu groß."));
         ThemePackage package;
-        try { package = JsonSerializer.Deserialize<ThemePackage>(json) ?? throw new InvalidDataException("Leere Design-Datei."); }
-        catch (JsonException ex) { throw new InvalidDataException("Ungültiges Design-Format.", ex); }
+        try { package = JsonSerializer.Deserialize<ThemePackage>(json) ?? throw new InvalidDataException(Localization.T("Empty theme file.", "Leere Design-Datei.")); }
+        catch (JsonException ex) { throw new InvalidDataException(Localization.T("Invalid theme format.", "Ungültiges Design-Format."), ex); }
         if (package.Version != 1 || package.Style is < 0 or > 4 || package.MaximizedStyle is < 0 or > 4)
-            throw new InvalidDataException("Nicht unterstützte Design-Werte.");
+            throw new InvalidDataException(Localization.T("Unsupported theme values.", "Nicht unterstützte Design-Werte."));
         var name = package.Name?.Trim() ?? "";
         var description = package.Description?.Trim() ?? "";
         if (name.Length is < 1 or > 32 || description.Length is < 1 or > 80 ||
             name.Any(char.IsControl) || description.Any(char.IsControl))
-            throw new InvalidDataException("Ungültiger Design-Name oder Beschreibung.");
+            throw new InvalidDataException(Localization.T("Invalid theme name or description.", "Ungültiger Design-Name oder Beschreibung."));
         var canonical = $"{name}\n{description}\n{package.Style}\n{package.Color}\n{package.AutoContrast}\n{package.ContextStyle}\n{package.MaximizedStyle}";
         var id = "shared-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))[..12].ToLowerInvariant();
         var rgb = System.Drawing.Color.FromArgb(package.Color | unchecked((int)0xFF000000));
@@ -53,7 +53,7 @@ internal sealed class ThemePackage
 
     public static ThemeDefinition ImportFile(string path)
     {
-        if (new FileInfo(path).Length > 16 * 1024) throw new InvalidDataException("Design-Datei ist zu groß.");
+        if (new FileInfo(path).Length > 16 * 1024) throw new InvalidDataException(Localization.T("Theme file is too large.", "Design-Datei ist zu groß."));
         return Import(File.ReadAllText(path, Encoding.UTF8));
     }
 

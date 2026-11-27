@@ -15,7 +15,7 @@ sealed class StackSettingsDialog : Form
     {
         draft = (current ?? new AppStackConfig()).Copy();
         Config = draft.Copy();
-        Text = "winBar · App-Stapel";
+        Text = Localization.T("winBar · App stacks", "winBar · App-Stapel");
         Font = new Font("Segoe UI", 10);
         AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(720, 680);
@@ -35,12 +35,12 @@ sealed class StackSettingsDialog : Form
         layout.Controls.Add(hero, 0, 0);
         hero.Controls.Add(new Label
         {
-            Text = "App-Stapel", Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold),
+            Text = Localization.T("App stacks", "App-Stapel"), Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold),
             ForeColor = Color.White, Location = new Point(26, 14), Size = new Size(420, 54)
         });
         hero.Controls.Add(new Label
         {
-            Text = "Mehr Apps. Weniger Symbole.", Font = new Font("Segoe UI", 10),
+            Text = Localization.T("More apps. Fewer icons.", "Mehr Apps. Weniger Symbole."), Font = new Font("Segoe UI", 10),
             ForeColor = Color.FromArgb(170, 194, 227), AutoSize = true, Location = new Point(29, 64)
         });
         preview = new StackPreview(draft) { Location = new Point(26, 105), Size = new Size(650, 56), Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top };
@@ -49,12 +49,12 @@ sealed class StackSettingsDialog : Form
 
         var options = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(242, 246, 251) };
         layout.Controls.Add(options, 0, 1);
-        var enabled = new CheckBox { Text = "App-Stapel verwenden", Checked = draft.Enabled, AutoSize = true, Location = new Point(25, 14) };
+        var enabled = new CheckBox { Text = Localization.T("Use app stacks", "App-Stapel verwenden"), Checked = draft.Enabled, AutoSize = true, Location = new Point(25, 14) };
         enabled.CheckedChanged += (_, _) => { draft.Enabled = enabled.Checked; preview.Invalidate(); ValidateDraft(); };
         options.Controls.Add(enabled);
-        var auto = new CheckBox { Text = "Bei voller Taskleiste kompakt", Checked = draft.AutoCompact, AutoSize = true, Location = new Point(25, 47) };
+        var auto = new CheckBox { Text = Localization.T("Compact when the taskbar fills up", "Bei voller Taskleiste kompakt"), Checked = draft.AutoCompact, AutoSize = true, Location = new Point(25, 47) };
         options.Controls.Add(auto);
-        var thresholdLabel = new Label { Text = "Ab", AutoSize = true, Location = new Point(368, 49) };
+        var thresholdLabel = new Label { Text = Localization.T("At", "Ab"), AutoSize = true, Location = new Point(368, 49) };
         options.Controls.Add(thresholdLabel);
         var threshold = new NumericUpDown
         {
@@ -67,7 +67,8 @@ sealed class StackSettingsDialog : Form
         threshold.ValueChanged += (_, _) => draft.CompactAtPercent = (int)threshold.Value;
         options.Controls.Add(new Label
         {
-            Text = "Position 1 ist die erste angeheftete App. Der erste Pin bleibt sichtbar.\nAlt oder Hover zeigt die übrigen; laufende Apps bleiben sichtbar.",
+            Text = Localization.T("Position 1 is the first pinned app. The first pin stays visible.\nAlt or hover reveals the others; running apps stay visible.",
+                "Position 1 ist die erste angeheftete App. Der erste Pin bleibt sichtbar.\nAlt oder Hover zeigt die übrigen; laufende Apps bleiben sichtbar."),
             ForeColor = Color.FromArgb(80, 97, 122), Location = new Point(28, 76), Size = new Size(650, 72),
             Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top
         });
@@ -82,19 +83,19 @@ sealed class StackSettingsDialog : Form
 
         var footer = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(248, 250, 253) };
         layout.Controls.Add(footer, 0, 3);
-        add = new Button { Text = "+ Stapel", Location = new Point(24, 17), Size = new Size(104, 36), FlatStyle = FlatStyle.Flat };
+        add = new Button { Text = Localization.T("+ Stack", "+ Stapel"), Location = new Point(24, 17), Size = new Size(104, 36), FlatStyle = FlatStyle.Flat };
         add.FlatAppearance.BorderColor = Color.FromArgb(171, 190, 218);
         add.Click += (_, _) => AddGroup();
         footer.Controls.Add(add);
         status = new Label { ForeColor = Color.FromArgb(82, 98, 120), Location = new Point(139, 15), Size = new Size(280, 44), Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top };
         footer.Controls.Add(status);
-        var cancel = new Button { Text = "Abbrechen", Size = new Size(98, 36), Anchor = AnchorStyles.Top | AnchorStyles.Right, FlatStyle = FlatStyle.Flat };
+        var cancel = new Button { Text = Localization.T("Cancel", "Abbrechen"), Size = new Size(98, 36), Anchor = AnchorStyles.Top | AnchorStyles.Right, FlatStyle = FlatStyle.Flat };
         cancel.FlatAppearance.BorderSize = 0;
         cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
         footer.Controls.Add(cancel);
         save = new Button
         {
-            Text = "Speichern", Size = new Size(105, 36), Anchor = AnchorStyles.Top | AnchorStyles.Right,
+            Text = Localization.T("Save", "Speichern"), Size = new Size(105, 36), Anchor = AnchorStyles.Top | AnchorStyles.Right,
             BackColor = Color.FromArgb(50, 95, 164), ForeColor = Color.White, FlatStyle = FlatStyle.Flat
         };
         save.FlatAppearance.BorderSize = 0;
@@ -125,8 +126,8 @@ sealed class StackSettingsDialog : Form
         if (draft.Groups.Count >= 4) return;
         int start = 1;
         while (start <= 31 && draft.Groups.Any(group => start <= group.Start + group.Count - 1 && start + 1 >= group.Start)) start++;
-        if (start > 31) { status.Text = "Kein freier Bereich für zwei Apps."; return; }
-        draft.Groups.Add(new AppStackGroup { Name = $"Stapel {draft.Groups.Count + 1}", Start = start });
+        if (start > 31) { status.Text = Localization.T("No free range for two apps.", "Kein freier Bereich für zwei Apps."); return; }
+        draft.Groups.Add(new AppStackGroup { Name = $"{Localization.T("Stack", "Stapel")} {draft.Groups.Count + 1}", Start = start });
         RenderCards();
     }
 
@@ -155,21 +156,21 @@ sealed class StackSettingsDialog : Form
         var card = new StackCard { Height = 174, Width = Math.Max(500, cards.ClientSize.Width - 65), Margin = new Padding(0, 0, 0, 11) };
         card.Controls.Add(new Label
         {
-            Text = $"Stapel {index + 1}", Font = new Font("Segoe UI Semibold", 11, FontStyle.Bold),
+            Text = $"{Localization.T("Stack", "Stapel")} {index + 1}", Font = new Font("Segoe UI Semibold", 11, FontStyle.Bold),
             ForeColor = Color.FromArgb(34, 51, 77), AutoSize = true, Location = new Point(16, 11)
         });
-        var active = new CheckBox { Text = "Aktiv", Checked = group.Enabled, AutoSize = true, Location = new Point(250, 13) };
+        var active = new CheckBox { Text = Localization.T("Active", "Aktiv"), Checked = group.Enabled, AutoSize = true, Location = new Point(250, 13) };
         active.CheckedChanged += (_, _) => { group.Enabled = active.Checked; preview.Invalidate(); ValidateDraft(); };
         card.Controls.Add(active);
-        var remove = new Button { Text = "×", AccessibleName = "Stapel löschen", Size = new Size(36, 29), FlatStyle = FlatStyle.Flat, Anchor = AnchorStyles.Right | AnchorStyles.Top };
+        var remove = new Button { Text = "×", AccessibleName = Localization.T("Delete stack", "Stapel löschen"), Size = new Size(36, 29), FlatStyle = FlatStyle.Flat, Anchor = AnchorStyles.Right | AnchorStyles.Top };
         remove.FlatAppearance.BorderSize = 0;
         remove.Location = new Point(card.Width - remove.Width - 10, 9);
         remove.Click += (_, _) => { draft.Groups.Remove(group); RenderCards(); };
         card.Controls.Add(remove);
 
         card.Controls.Add(Caption("Name", 18, 43));
-        card.Controls.Add(Caption("Startposition", 247, 43));
-        card.Controls.Add(Caption("Anzahl", 371, 43));
+        card.Controls.Add(Caption(Localization.T("Start position", "Startposition"), 247, 43));
+        card.Controls.Add(Caption(Localization.T("Count", "Anzahl"), 371, 43));
         var name = new TextBox { Text = group.Name, Location = new Point(18, 65), Width = 210 };
         name.TextChanged += (_, _) => { group.Name = name.Text; preview.Invalidate(); ValidateDraft(); };
         card.Controls.Add(name);
@@ -182,16 +183,17 @@ sealed class StackSettingsDialog : Form
 
         group.LaunchPaths ??= [];
         var paths = new Label { ForeColor = Color.FromArgb(70, 92, 122), Location = new Point(18, 108), Width = 270, Height = 24 };
-        void UpdatePaths() => paths.Text = $"Alle starten · {group.LaunchPaths.Count} Dateien";
+        void UpdatePaths() => paths.Text = Localization.T($"Launch all · {group.LaunchPaths.Count} files", $"Alle starten · {group.LaunchPaths.Count} Dateien");
         UpdatePaths();
         card.Controls.Add(paths);
-        var choose = new Button { Text = "Wählen…", Location = new Point(292, 103), Size = new Size(145, 34), FlatStyle = FlatStyle.Flat };
+        var choose = new Button { Text = Localization.T("Choose…", "Wählen…"), Location = new Point(292, 103), Size = new Size(145, 34), FlatStyle = FlatStyle.Flat };
         choose.FlatAppearance.BorderColor = Color.FromArgb(167, 190, 221);
         choose.Click += (_, _) =>
         {
             using var picker = new OpenFileDialog
             {
-                Title = "Programme für Alle starten auswählen", Filter = "Programme oder Verknüpfungen (*.exe;*.lnk)|*.exe;*.lnk",
+                Title = Localization.T("Choose programs for Launch all", "Programme für Alle starten auswählen"),
+                Filter = Localization.T("Programs or shortcuts (*.exe;*.lnk)|*.exe;*.lnk", "Programme oder Verknüpfungen (*.exe;*.lnk)|*.exe;*.lnk"),
                 Multiselect = true, CheckFileExists = true
             };
             if (picker.ShowDialog(this) != DialogResult.OK) return;
@@ -203,13 +205,13 @@ sealed class StackSettingsDialog : Form
             UpdatePaths();
         };
         card.Controls.Add(choose);
-        var clear = new Button { Text = "Leeren", Location = new Point(443, 103), Size = new Size(85, 34), FlatStyle = FlatStyle.Flat };
+        var clear = new Button { Text = Localization.T("Clear", "Leeren"), Location = new Point(443, 103), Size = new Size(85, 34), FlatStyle = FlatStyle.Flat };
         clear.FlatAppearance.BorderSize = 0;
         clear.Click += (_, _) => { group.LaunchPaths.Clear(); UpdatePaths(); };
         card.Controls.Add(clear);
         card.Controls.Add(new Label
         {
-            Text = "Nur ausgewählte Dateien werden zusammen gestartet.",
+            Text = Localization.T("Only selected files are launched together.", "Nur ausgewählte Dateien werden zusammen gestartet."),
             ForeColor = Color.FromArgb(107, 122, 142), Location = new Point(18, 143), Size = new Size(500, 23)
         });
         card.Resize += (_, _) => remove.Left = card.Width - remove.Width - 10;
@@ -226,7 +228,7 @@ sealed class StackSettingsDialog : Form
     {
         bool valid = draft.IsValid(out var reason);
         save.Enabled = valid;
-        status.Text = valid ? $"{draft.Groups.Count} von 4 Stapeln" : reason;
+        status.Text = valid ? Localization.T($"{draft.Groups.Count} of 4 stacks", $"{draft.Groups.Count} von 4 Stapeln") : reason;
         status.ForeColor = valid ? Color.FromArgb(82, 98, 120) : Color.FromArgb(176, 57, 70);
         add.Enabled = draft.Groups.Count < 4;
     }
@@ -257,7 +259,7 @@ sealed class StackSettingsDialog : Form
         {
             this.config = config;
             DoubleBuffered = true;
-            AccessibleName = "Vorschau der App-Stapel";
+            AccessibleName = Localization.T("App stack preview", "Vorschau der App-Stapel");
         }
 
         protected override void OnPaint(PaintEventArgs e)

@@ -33,10 +33,21 @@ internal static class MonitorAccent
 {
     [StructLayout(LayoutKind.Sequential)] struct AccentPolicy { public int AccentState, AccentFlags, GradientColor, AnimationId; }
     [StructLayout(LayoutKind.Sequential)] struct WinCompAttrData { public int Attribute; public IntPtr Data; public int SizeOfData; }
-    [DllImport("user32.dll")] static extern int SetWindowCompositionAttribute(IntPtr handle, ref WinCompAttrData data);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool SetWindowCompositionAttribute(IntPtr handle, ref WinCompAttrData data);
 
     static readonly Dictionary<IntPtr, (int State, int Color)> applied = [];
     static readonly int[] accentFor = [0, 2, 2, 3, 4];
+
+    // Acrylic with a zero-alpha tint does not render reliably. Keep a custom RGB value,
+    // but give it a visible opacity; Clear's RGB=0 receives the Glass preset tint.
+    public static int EnsureAcrylicColor(int argb)
+    {
+        if ((argb & unchecked((int)0xFF000000)) != 0) return argb;
+        int rgb = argb & 0x00FFFFFF;
+        return unchecked((int)0xA0000000) | (rgb == 0 ? 0x002A405A : rgb);
+    }
 
     public static void Apply(IEnumerable<MonitorTaskbar> bars, Func<Screen, MonitorVisual> selectVisual,
         Screen? foregroundScreen, bool foregroundMaximized, int? foregroundAppTint)
@@ -54,12 +65,16 @@ internal static class MonitorAccent
                 ? (visual.Color & unchecked((int)0xFF000000)) | tint
                 : visual.AutoContrast ? Taskbar.SystemTint(visual.Color) : visual.Color;
             int state = accentFor[style];
+            // Native blur stopped blurring on Windows 11 22H2 and newer; acrylic is the
+            // closest built-in material until Windows restores a native blur brush.
+            if (state == 3 && Environment.OSVersion.Version.Build >= 22621) state = 4;
+            if (state == 4) color = EnsureAcrylicColor(color);
             int abgr = style == 1 ? 0 : Taskbar.ToAbgr(color);
             if (applied.TryGetValue(bar.Handle, out var previous) && previous == (state, abgr)) continue;
             // A previous global Taskbar.SetAccent call may have styled this HWND.
             // Explicitly clear it even when this is our first per-monitor pass.
-            Set(bar.Handle, state, abgr);
-            applied[bar.Handle] = (state, abgr);
+            if (Set(bar.Handle, state, abgr) || (state == 4 && Set(bar.Handle, 2, abgr)))
+                applied[bar.Handle] = (state, abgr);
         }
         foreach (var stale in applied.Keys.Where(handle => !current.Contains(handle)).ToArray()) applied.Remove(stale);
     }
@@ -70,15 +85,15 @@ internal static class MonitorAccent
         applied.Clear();
     }
 
-    static void Set(IntPtr handle, int state, int abgr)
+    static bool Set(IntPtr handle, int state, int abgr)
     {
-        var policy = new AccentPolicy { AccentState = state, AccentFlags = 2, GradientColor = abgr };
+        var policy = new AccentPolicy { AccentState = state, AccentFlags = state == 4 ? 0 : 2, GradientColor = abgr };
         var pointer = Marshal.AllocHGlobal(Marshal.SizeOf<AccentPolicy>());
         try
         {
             Marshal.StructureToPtr(policy, pointer, false);
             var data = new WinCompAttrData { Attribute = 19, Data = pointer, SizeOfData = Marshal.SizeOf<AccentPolicy>() };
-            SetWindowCompositionAttribute(handle, ref data);
+            return SetWindowCompositionAttribute(handle, ref data);
         }
         finally { Marshal.FreeHGlobal(pointer); }
     }

@@ -33,6 +33,7 @@ internal sealed class MonitorLayoutDialog : Form
     public MonitorLayoutDialog(Settings baseline, IEnumerable<MonitorLayout>? layouts,
         bool nativePerMonitorReady = false)
     {
+        RegisterCopy();
         this.baseline = baseline;
         nativeReady = nativePerMonitorReady;
         Layouts = (layouts ?? []).Select(layout => layout.Copy()).ToList();
@@ -105,6 +106,57 @@ internal sealed class MonitorLayoutDialog : Form
         foreach (var screen in screens) displayList.Items.Add(new DisplayChoice(screen));
         if (displayList.Items.Count > 0) displayList.SelectedIndex = 0;
         else tabs.Enabled = false;
+        loading = true;
+        try { Localization.Apply(this); }
+        finally { loading = false; }
+    }
+
+    static void RegisterCopy()
+    {
+        Localization.Register("winBar · Monitors", "winBar · Monitore");
+        Localization.Register("Monitors", "Monitore");
+        Localization.Register("Design, clock and elements for each display.", "Design, Uhr und Elemente pro Bildschirm.");
+        Localization.Register("Set the clock for each display.", "Die Uhr auf jedem Bildschirm passend einstellen.");
+        Localization.Register("Connected", "Verbunden");
+        Localization.Register("Disconnected displays keep their settings.", "Getrennte Bildschirme behalten ihre Einstellungen.");
+        Localization.Register("Changes take effect when you save.", "Änderungen gelten nach dem Speichern.");
+        Localization.Register("Cancel", "Abbrechen");
+        Localization.Register("Save", "Speichern");
+        Localization.Register("Appearance", "Aussehen");
+        Localization.Register("Use a separate look on this monitor", "Eigenes Design auf diesem Monitor");
+        Localization.Register("Windows default", "Windows-Standard");
+        Localization.Register("Transparent", "Transparent");
+        Localization.Register("Tinted", "Getönt");
+        Localization.Register("Blur", "Blur");
+        Localization.Register("Acrylic", "Acrylic");
+        Localization.Register("Style", "Stil");
+        Localization.Register("Color", "Farbe");
+        Localization.Register("Opacity", "Deckkraft");
+        Localization.Register("Windows accent as tint", "Windows-Akzent als Tönung");
+        Localization.Register("Active app color", "Farbe der aktiven App");
+        Localization.Register("Different style for maximized windows", "Anderer Stil bei maximiertem Fenster");
+        Localization.Register("Then", "Dann");
+        Localization.Register("Clock", "Uhr");
+        Localization.Register("Use a separate clock on this monitor", "Eigene Uhr auf diesem Monitor");
+        Localization.Register("Off", "Aus");
+        Localization.Register("Time only", "Nur Uhrzeit");
+        Localization.Register("Time and date", "Uhrzeit und Datum");
+        Localization.Register("Display", "Anzeige");
+        Localization.Register("No second time zone", "Keine zweite Zeitzone");
+        Localization.Register("On hover", "Beim Darüberfahren");
+        Localization.Register("This setting applies to this display. The second time zone appears on hover.", "Diese Einstellung gilt für diesen Bildschirm. Die zweite Zeitzone öffnet sich bei Mausnähe.");
+        Localization.Register("Elements", "Elemente");
+        Localization.Register("Configure the right side separately", "Rechte Seite getrennt einstellen");
+        Localization.Register("Clock / notifications", "Uhr / Mitteilungen");
+        Localization.Register("Wi-Fi / volume / battery", "WLAN / Lautstärke / Akku");
+        Localization.Register("Tray icons", "Tray-Icons");
+        Localization.Register("Language", "Sprache");
+        Localization.Register("Always", "Immer");
+        Localization.Register("With Alt or hover", "Bei Alt oder Mausnähe");
+        Localization.Register("Configure pinned apps separately", "Angeheftete Apps getrennt einstellen");
+        Localization.Register("Show only with Alt", "Erst mit Alt zeigen");
+        Localization.Register("Always visible", "Immer sichtbar");
+        Localization.Register("Choose app stacks separately", "App-Stapel getrennt auswählen");
     }
 
     TabPage BuildAppearancePage()
@@ -324,12 +376,12 @@ internal sealed class MonitorLayoutDialog : Form
         var color = Color.FromArgb(draft.Color | unchecked((int)0xFF000000));
         colorButton.BackColor = color;
         colorButton.ForeColor = color.GetBrightness() > 0.5f ? Color.Black : Color.White;
-        colorButton.Text = $"#{color.R:X2}{color.G:X2}{color.B:X2}  ändern";
+        colorButton.Text = Localization.T($"#{color.R:X2}{color.G:X2}{color.B:X2}  change", $"#{color.R:X2}{color.G:X2}{color.B:X2}  ändern");
     }
 
     sealed record DisplayChoice(Screen Screen)
     {
-        public override string ToString() => $"{(Screen.Primary ? "Hauptmonitor" : "Monitor")} · {Screen.Bounds.Width}×{Screen.Bounds.Height} · {Screen.DeviceName}";
+        public override string ToString() => $"{(Screen.Primary ? Localization.T("Primary display", "Hauptmonitor") : "Monitor")} · {Screen.Bounds.Width}×{Screen.Bounds.Height} · {Screen.DeviceName}";
     }
     sealed record StackChoice(string Id, string Name)
     {

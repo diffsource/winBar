@@ -43,8 +43,9 @@ sealed class StackWindowPreviewPopup : Form
         var matching = selected.Count == 0 ? [] : AppWindows.List().Where(window => selected.Contains(window.Path)).ToArray();
         var popup = new StackWindowPreviewPopup(group.Id, group.Name, matching.Take(6).ToArray(),
             selected.Count == 0
-                ? "Wähle im Stapel-Editor Programme für ‚Alle starten‘ aus, um ihre Fenster hier zu sehen."
-                : "Keine passenden Fenster geöffnet.", matching.Length);
+                ? Localization.T("Choose programs for ‘Launch all’ in the stack editor to preview their windows here.",
+                    "Wähle im Stapel-Editor Programme für ‚Alle starten‘ aus, um ihre Fenster hier zu sehen.")
+                : Localization.T("No matching windows are open.", "Keine passenden Fenster geöffnet."), matching.Length);
         popup.PositionAt(anchor);
         popup.Show();
         return popup;
@@ -78,7 +79,9 @@ sealed class StackWindowPreviewPopup : Form
         GroupId = groupId;
         this.windows = windows;
         this.emptyMessage = emptyMessage;
-        title = total > windows.Length ? $"{name} · {total} Fenster (erste {windows.Length})" : $"{name} · {total} Fenster";
+        title = total > windows.Length
+            ? Localization.T($"{name} · {total} windows (first {windows.Length})", $"{name} · {total} Fenster (erste {windows.Length})")
+            : Localization.T($"{name} · {total} windows", $"{name} · {total} Fenster");
         Text = $"winBar · {name}";
         Font = new Font("Segoe UI", 9.5f);
         BackColor = Color.FromArgb(26, 37, 55);

@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 sealed class WorkspaceScene
 {
-    public string Name { get; set; } = "Arbeitsbereich";
+    public string Name { get; set; } = Localization.T("Workspace", "Arbeitsbereich");
     public List<string> Apps { get; set; } = [];
     public List<WorkspaceWindowPlacement> Windows { get; set; } = [];
 }
@@ -153,7 +153,7 @@ sealed class WorkspaceManagerDialog : Form
     public WorkspaceManagerDialog(Settings settings)
     {
         this.settings = settings;
-        Text = "winBar · Arbeitsbereiche";
+        Text = Localization.T("winBar · Workspaces", "winBar · Arbeitsbereiche");
         ClientSize = new Size(540, 380);
         MinimumSize = new Size(500, 340);
         StartPosition = FormStartPosition.CenterParent;
@@ -161,12 +161,12 @@ sealed class WorkspaceManagerDialog : Form
         BackColor = Color.FromArgb(246, 248, 252);
         Controls.Add(new Label
         {
-            Text = "Arbeitsbereiche", Font = new Font("Segoe UI Semibold", 18, FontStyle.Bold),
+            Text = Localization.T("Workspaces", "Arbeitsbereiche"), Font = new Font("Segoe UI Semibold", 18, FontStyle.Bold),
             ForeColor = Color.FromArgb(28, 42, 63), Location = new Point(20, 17), Size = new Size(400, 40)
         });
         Controls.Add(new Label
         {
-            Text = "Starte ausgewählte Apps und stelle ihre Fenster wieder an ihren Platz.",
+            Text = Localization.T("Launch selected apps and restore their windows to their places.", "Starte ausgewählte Apps und stelle ihre Fenster wieder an ihren Platz."),
             ForeColor = Color.FromArgb(68, 82, 105), Location = new Point(23, 58), Size = new Size(480, 44)
         });
         list.Location = new Point(22, 108);
@@ -174,18 +174,18 @@ sealed class WorkspaceManagerDialog : Form
         list.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         list.DisplayMember = nameof(WorkspaceScene.Name);
         Controls.Add(list);
-        emptyState.Text = "Noch keine Arbeitsbereiche.\nKlicke auf „Neu aus offenen Apps“, um einen anzulegen.";
+        emptyState.Text = Localization.T("No workspaces yet.\nChoose ‘New from open apps’ to create one.", "Noch keine Arbeitsbereiche.\nKlicke auf „Neu aus offenen Apps“, um einen anzulegen.");
         emptyState.TextAlign = ContentAlignment.MiddleCenter;
         emptyState.ForeColor = Color.FromArgb(105, 119, 142);
         emptyState.BackColor = Color.White;
         emptyState.Location = new Point(60, 163);
         emptyState.Size = new Size(412, 64);
         Controls.Add(emptyState);
-        var create = Button("Neu aus offenen Apps…", 22, 302, 172);
+        var create = Button(Localization.T("New from open apps…", "Neu aus offenen Apps…"), 22, 302, 172);
         create.Click += (_, _) => CreateScene();
-        var launch = Button("Öffnen", 204, 302, 90);
+        var launch = Button(Localization.T("Open", "Öffnen"), 204, 302, 90);
         launch.Click += async (_, _) => await LaunchSelectedAsync();
-        var remove = Button("Entfernen", 304, 302, 100);
+        var remove = Button(Localization.T("Remove", "Entfernen"), 304, 302, 100);
         remove.Click += (_, _) => RemoveSelected();
         status.Location = new Point(23, 345);
         status.Size = new Size(490, 24);
@@ -207,7 +207,7 @@ sealed class WorkspaceManagerDialog : Form
 
     void CreateScene()
     {
-        if (list.Items.Count >= 12) { status.Text = "Maximal zwölf Arbeitsbereiche."; return; }
+        if (list.Items.Count >= 12) { status.Text = Localization.T("Up to twelve workspaces.", "Maximal zwölf Arbeitsbereiche."); return; }
         using var capture = new WorkspaceCaptureDialog();
         if (capture.ShowDialog(this) != DialogResult.OK) return;
         var scene = WorkspaceController.Capture(capture.SceneName, capture.SelectedApps);
@@ -217,17 +217,17 @@ sealed class WorkspaceManagerDialog : Form
         list.Items.Add(scene);
         list.SelectedItem = scene;
         RefreshEmptyState();
-        status.Text = $"{scene.Apps.Count} Apps und {scene.Windows.Count} Fenster gespeichert.";
+        status.Text = Localization.T($"Saved {scene.Apps.Count} apps and {scene.Windows.Count} windows.", $"{scene.Apps.Count} Apps und {scene.Windows.Count} Fenster gespeichert.");
     }
 
     async Task LaunchSelectedAsync()
     {
         if (list.SelectedItem is not WorkspaceScene scene) return;
-        status.Text = "Arbeitsbereich wird geöffnet…";
+        status.Text = Localization.T("Opening workspace…", "Arbeitsbereich wird geöffnet…");
         try
         {
             var result = await WorkspaceController.RestoreAsync(scene, stop.Token);
-            if (!IsDisposed) status.Text = $"{result.Launched} Apps gestartet · {result.Placed} Fenster platziert.";
+            if (!IsDisposed) status.Text = Localization.T($"Launched {result.Launched} apps · placed {result.Placed} windows.", $"{result.Launched} Apps gestartet · {result.Placed} Fenster platziert.");
         }
         catch (OperationCanceledException) { }
     }
@@ -239,7 +239,7 @@ sealed class WorkspaceManagerDialog : Form
         settings.Save();
         list.Items.Remove(scene);
         RefreshEmptyState();
-        status.Text = "Arbeitsbereich entfernt.";
+        status.Text = Localization.T("Workspace removed.", "Arbeitsbereich entfernt.");
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e) { stop.Cancel(); base.OnFormClosed(e); stop.Dispose(); }
@@ -256,7 +256,7 @@ sealed class WorkspaceCaptureDialog : Form
 
     public WorkspaceCaptureDialog()
     {
-        Text = "Arbeitsbereich speichern";
+        Text = Localization.T("Save workspace", "Arbeitsbereich speichern");
         ClientSize = new Size(590, 450);
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 10);
@@ -265,11 +265,12 @@ sealed class WorkspaceCaptureDialog : Form
         name.Location = new Point(20, 45);
         name.Size = new Size(545, 29);
         name.MaxLength = 48;
-        name.Text = "Neuer Arbeitsbereich";
+        name.Text = Localization.T("New workspace", "Neuer Arbeitsbereich");
         Controls.Add(name);
         Controls.Add(new Label
         {
-            Text = "Wähle Apps, die beim Öffnen gestartet werden sollen. Ihre aktuellen Fensterpositionen werden mitgespeichert.",
+            Text = Localization.T("Choose apps to launch when you open this workspace. Their current window positions are saved too.",
+                "Wähle Apps, die beim Öffnen gestartet werden sollen. Ihre aktuellen Fensterpositionen werden mitgespeichert."),
             Location = new Point(20, 90), Size = new Size(540, 52)
         });
         apps.Location = new Point(20, 146);
@@ -282,18 +283,18 @@ sealed class WorkspaceCaptureDialog : Form
         };
         Controls.Add(apps);
         foreach (var app in AppWindows.List().GroupBy(w => w.Path, StringComparer.OrdinalIgnoreCase).Select(g => g.First())) AddPath(app.Path);
-        var browse = new Button { Text = "EXE hinzufügen…", Location = new Point(20, 390), Size = new Size(145, 34) };
+        var browse = new Button { Text = Localization.T("Add EXE…", "EXE hinzufügen…"), Location = new Point(20, 390), Size = new Size(145, 34) };
         browse.Click += (_, _) =>
         {
-            using var pick = new OpenFileDialog { Filter = "Programme (*.exe)|*.exe", CheckFileExists = true };
+            using var pick = new OpenFileDialog { Filter = Localization.T("Programs (*.exe)|*.exe", "Programme (*.exe)|*.exe"), CheckFileExists = true };
             if (pick.ShowDialog(this) == DialogResult.OK) AddPath(pick.FileName, true);
         };
         Controls.Add(browse);
-        var save = new Button { Text = "Speichern", Location = new Point(455, 390), Size = new Size(110, 34), DialogResult = DialogResult.OK };
+        var save = new Button { Text = Localization.T("Save", "Speichern"), Location = new Point(455, 390), Size = new Size(110, 34), DialogResult = DialogResult.OK };
         save.Click += (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(name.Text) || !apps.CheckedIndices.Cast<int>().Any())
-            { DialogResult = DialogResult.None; MessageBox.Show(this, "Bitte einen Namen und mindestens eine App auswählen."); }
+            { DialogResult = DialogResult.None; MessageBox.Show(this, Localization.T("Choose a name and at least one app.", "Bitte einen Namen und mindestens eine App auswählen.")); }
         };
         Controls.Add(save);
         AcceptButton = save;

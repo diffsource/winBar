@@ -31,7 +31,7 @@ internal sealed class ThemePicker : UserControl
                 ThemeSelected?.Invoke(theme);
             };
             Controls.Add(card);
-            tips.SetToolTip(card, theme.Description);
+            tips.SetToolTip(card, Description(theme));
             return card;
         }).ToArray();
         int rows = (cards.Length + 1) / 2;
@@ -46,6 +46,15 @@ internal sealed class ThemePicker : UserControl
         selectedId = ThemeCatalog.Find(id)?.Id;
         foreach (var card in cards) card.SetSelected(card.Theme.Id == selectedId);
     }
+
+    private static string Description(ThemeDefinition theme) => theme.Id switch
+    {
+        "glass" => Localization.T("Cool smoked glass", "Kühles Rauchglas"),
+        "glacier" => Localization.T("Soft frosted glass", "Weiches Milchglas"),
+        "ink" => Localization.T("Dark, crisp gray", "Dunkles, klares Grau"),
+        "adaptive" => Localization.T("Adapts to Windows", "Passt sich Windows an"),
+        _ => theme.Description // Names and descriptions of imported themes belong to their author.
+    };
 
     void LayoutCards()
     {
@@ -84,8 +93,8 @@ internal sealed class ThemePicker : UserControl
             BackColor = Color.White;
             Cursor = Cursors.Hand;
             Text = theme.Name;
-            AccessibleName = $"{theme.Name}: {theme.Description}";
-            AccessibleDescription = "Design auswählen";
+            AccessibleName = $"{theme.Name}: {Description(theme)}";
+            AccessibleDescription = Localization.T("Choose theme", "Design auswählen");
         }
 
         public void SetSelected(bool value)
@@ -129,7 +138,7 @@ internal sealed class ThemePicker : UserControl
             using var descriptionFont = new Font("Segoe UI", 8.5f);
             TextRenderer.DrawText(e.Graphics, theme.Name, nameFont, new Rectangle(13, 69, Width - 42, 23),
                 Color.FromArgb(26, 41, 62), TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-            TextRenderer.DrawText(e.Graphics, theme.Description, descriptionFont, new Rectangle(13, 94, Width - 26, 23),
+            TextRenderer.DrawText(e.Graphics, Description(theme), descriptionFont, new Rectangle(13, 94, Width - 26, 23),
                 Color.FromArgb(82, 99, 121), TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
             if (selected)
             {

@@ -75,7 +75,7 @@ sealed class AltSettingsButton : Form
         using var border = new Pen(Color.FromArgb(111, 147, 207));
         e.Graphics.FillPath(fill, shape);
         e.Graphics.DrawPath(border, shape);
-        TextRenderer.DrawText(e.Graphics, "⚙  Einstellungen", Font, ClientRectangle, Color.White,
+        TextRenderer.DrawText(e.Graphics, Localization.T("⚙  Settings", "⚙  Einstellungen"), Font, ClientRectangle, Color.White,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
     }
 
@@ -90,6 +90,10 @@ sealed class AltSettingsButton : Form
 // Paints over the existing clock, preserving its taskbar space and Windows click behavior.
 sealed class DesignClock : IDisposable
 {
+    [StructLayout(LayoutKind.Sequential)] struct MonitorPoint { public int X, Y; }
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(MonitorPoint point, uint flags);
+    [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr monitor, int dpiType, out uint x, out uint y);
+
     readonly List<ClockPill> pills = [];
     readonly Dictionary<string, TimeZoneInfo?> zones = new(StringComparer.OrdinalIgnoreCase);
 
@@ -102,23 +106,56 @@ sealed class DesignClock : IDisposable
     public void Update(Func<Screen, MonitorClock> selectClock)
     {
         var bars = Taskbar.VisibleBounds()
-            .Where(r => r.Width > r.Height * 3 && r.Height >= 32 && !Taskbar.CoveredByFullscreenWindow(r))
-            .Select(r => (Bounds: r, Clock: selectClock(Screen.FromRectangle(r))))
+            .Where(r => r.Width > r.Height * 3 && !Taskbar.CoveredByFullscreenWindow(r))
+            .Select(r => (Raw: r, Screen: Screen.FromRectangle(r)))
+            .Select(item => (Bounds: VisibleBar(item.Raw, item.Screen.Bounds), Clock: selectClock(item.Screen)))
+            .Where(item => item.Bounds != Rectangle.Empty)
             .Where(item => item.Clock.Layout is 1 or 2).ToArray();
-        while (pills.Count > bars.Length) { pills[^1].Close(); pills.RemoveAt(pills.Count - 1); }
+        for (int i = bars.Length; i < pills.Count; i++) pills[i].HideOverlay();
         for (int i = 0; i < bars.Length; i++)
         {
             if (i == pills.Count) pills.Add(new ClockPill());
             var pill = pills[i];
             var bar = bars[i].Bounds;
             var config = bars[i].Clock;
-            pill.SetLayout(config.Layout);
-            pill.Location = new Point(bar.Right - pill.Width - 9, bar.Top + (bar.Height - pill.Height) / 2);
+            var screen = Screen.FromRectangle(bar).Bounds;
+            var bounds = ClockBounds(bar, screen, EffectiveDpi(bar), config.Layout);
+            pill.Configure(config.Layout, bounds);
             pill.SetSecondZone(FindZone(config.SecondaryTimeZoneId), config.SecondaryTimeZoneLabel);
             pill.RefreshTime();
             if (!pill.Visible) pill.Show();
             pill.UpdateHover(bar);
         }
+    }
+
+    internal static Rectangle VisibleBar(Rectangle bar, Rectangle screen)
+    {
+        var visible = Rectangle.Intersect(bar, screen);
+        // An auto-hidden taskbar still has a visible HWND, but almost all of its rectangle is offscreen.
+        if (visible.Width < bar.Width * 0.9 || visible.Height < 26 ||
+            visible.Height < bar.Height - Math.Max(4, bar.Height / 8)) return Rectangle.Empty;
+        return visible;
+    }
+
+    static int EffectiveDpi(Rectangle bar)
+    {
+        var center = new MonitorPoint { X = bar.Left + bar.Width / 2, Y = bar.Top + bar.Height / 2 };
+        var monitor = MonitorFromPoint(center, 2); // MONITOR_DEFAULTTONEAREST
+        return monitor != IntPtr.Zero && GetDpiForMonitor(monitor, 0, out var x, out _) == 0
+            ? Math.Clamp((int)x, 96, 384) : 96;
+    }
+
+    internal static Rectangle ClockBounds(Rectangle bar, Rectangle screen, int dpi, int layout)
+    {
+        int baseWidth = layout == 1 ? 82 : 108;
+        int baseHeight = layout == 1 ? 36 : 40;
+        double scale = Math.Min(Math.Clamp(dpi, 96, 384) / 96.0, Math.Max(0.4, (bar.Height - 4.0) / baseHeight));
+        int width = Math.Max(1, (int)Math.Round(baseWidth * scale));
+        int height = Math.Max(1, (int)Math.Round(baseHeight * scale));
+        int margin = Math.Max(3, (int)Math.Round(9 * scale));
+        int x = Math.Clamp(bar.Right - width - margin, screen.Left, screen.Right - width);
+        int y = Math.Clamp(bar.Top + (bar.Height - height) / 2, bar.Top, bar.Bottom - height);
+        return new Rectangle(x, y, width, height);
     }
 
     TimeZoneInfo? FindZone(string? id)
@@ -137,6 +174,7 @@ sealed class DesignClock : IDisposable
     sealed class ClockPill : Form
     {
         static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
+        static readonly CultureInfo English = CultureInfo.GetCultureInfo("en-US");
         string? lastMinute;
         int layout = 2;
         TimeZoneInfo? secondZone;
@@ -145,6 +183,7 @@ sealed class DesignClock : IDisposable
 
         public ClockPill()
         {
+            AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
@@ -153,23 +192,28 @@ sealed class DesignClock : IDisposable
             DoubleBuffered = true;
             BackColor = Color.FromArgb(26, 34, 51);
             Opacity = 0.99;
-            using var outline = new GraphicsPath();
-            outline.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(12, 12));
-            Region = new Region(outline);
+            UpdateRegion();
         }
 
-        public void SetLayout(int value)
+        public void Configure(int value, Rectangle bounds)
         {
-            if (layout == value) return;
+            if (layout == value && Bounds == bounds) return;
             layout = value;
-            Size = layout == 1 ? new Size(82, 36) : new Size(108, 40);
+            Bounds = bounds;
+            UpdateRegion();
+            lastMinute = null;
+            Invalidate();
+        }
+
+        void UpdateRegion()
+        {
+            float scale = Width / (float)(layout == 1 ? 82 : 108);
+            int radius = Math.Max(3, (int)Math.Round(12 * scale));
             using var outline = new GraphicsPath();
-            outline.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(12, 12));
+            outline.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(radius, radius));
             var old = Region;
             Region = new Region(outline);
             old?.Dispose();
-            lastMinute = null;
-            Invalidate();
         }
 
         protected override bool ShowWithoutActivation => true;
@@ -207,10 +251,17 @@ sealed class DesignClock : IDisposable
             }
             hoverCard ??= new ClockHoverCard(secondZone, secondZoneLabel);
             var screen = Screen.FromRectangle(bar).Bounds;
+            hoverCard.Configure(EffectiveDpi(bar), screen);
             int x = Math.Clamp(Right - hoverCard.Width, screen.Left + 8, screen.Right - hoverCard.Width - 8);
             int y = bar.Top > screen.Top + screen.Height / 2 ? bar.Top - hoverCard.Height - 8 : bar.Bottom + 8;
-            hoverCard.Location = new Point(x, y);
+            hoverCard.Location = new Point(x, Math.Clamp(y, screen.Top + 8, screen.Bottom - hoverCard.Height - 8));
             if (!hoverCard.Visible) hoverCard.Show();
+        }
+
+        public void HideOverlay()
+        {
+            Hide();
+            hoverCard?.Hide();
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -221,22 +272,26 @@ sealed class DesignClock : IDisposable
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            float scale = Width / (float)(layout == 1 ? 82 : 108);
+            Rectangle Rect(float x, float y, float width, float height) => new(
+                (int)Math.Round(x * scale), (int)Math.Round(y * scale),
+                (int)Math.Round(width * scale), (int)Math.Round(height * scale));
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var shape = new GraphicsPath();
-            shape.AddRoundedRectangle(new Rectangle(1, 1, Width - 2, Height - 2), new Size(12, 12));
+            shape.AddRoundedRectangle(new Rectangle(1, 1, Width - 2, Height - 2), new Size(Math.Max(3, (int)(12 * scale)), Math.Max(3, (int)(12 * scale))));
             using var fill = new SolidBrush(Color.FromArgb(26, 34, 51));
             using var border = new Pen(Color.FromArgb(75, 106, 153));
             e.Graphics.FillPath(fill, shape);
             e.Graphics.DrawPath(border, shape);
-            using var timeFont = new Font("Segoe UI Semibold", 13, FontStyle.Bold);
-            using var dateFont = new Font("Segoe UI", 7.5f);
+            using var timeFont = new Font("Segoe UI Semibold", 17.3f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var dateFont = new Font("Segoe UI", 10f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
             var now = DateTime.Now;
             TextRenderer.DrawText(e.Graphics, now.ToString("HH:mm", German), timeFont,
-                layout == 1 ? new Rectangle(4, 7, Width - 8, 23) : new Rectangle(4, 2, Width - 8, 23),
-                Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+                layout == 1 ? Rect(4, 7, 74, 23) : Rect(4, 2, 100, 23),
+                Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter);
             if (layout == 2)
-                TextRenderer.DrawText(e.Graphics, now.ToString("ddd, dd.MM.", German), dateFont, new Rectangle(4, 24, Width - 8, 13),
-                    Color.FromArgb(165, 198, 245), TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(e.Graphics, Localization.IsGerman ? now.ToString("ddd, dd.MM.", German) : now.ToString("ddd M/d", English), dateFont, Rect(4, 24, 100, 13),
+                    Color.FromArgb(165, 198, 245), TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter);
         }
     }
 
@@ -250,6 +305,7 @@ sealed class DesignClock : IDisposable
         {
             this.zone = zone;
             this.label = label;
+            AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
             ShowInTaskbar = false;
@@ -258,9 +314,28 @@ sealed class DesignClock : IDisposable
             BackColor = Color.FromArgb(27, 37, 54);
             DoubleBuffered = true;
             Opacity = 0.98;
+            UpdateRegion();
+        }
+
+        public void Configure(int dpi, Rectangle screen)
+        {
+            double scale = Math.Min(Math.Clamp(dpi, 96, 384) / 96.0,
+                Math.Min((screen.Width - 16.0) / 220, (screen.Height - 16.0) / 104));
+            var size = new Size((int)Math.Round(220 * scale), (int)Math.Round(104 * scale));
+            if (Size == size) return;
+            Size = size;
+            UpdateRegion();
+            Invalidate();
+        }
+
+        void UpdateRegion()
+        {
+            int radius = Math.Max(4, (int)Math.Round(16 * Width / 220f));
             using var shape = new GraphicsPath();
-            shape.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(16, 16));
+            shape.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(radius, radius));
+            var old = Region;
             Region = new Region(shape);
+            old?.Dispose();
         }
 
         public void SetZone(TimeZoneInfo value, string? displayLabel)
@@ -278,26 +353,30 @@ sealed class DesignClock : IDisposable
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            float scale = Width / 220f;
+            Rectangle Rect(float x, float y, float width, float height) => new(
+                (int)Math.Round(x * scale), (int)Math.Round(y * scale),
+                (int)Math.Round(width * scale), (int)Math.Round(height * scale));
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var shape = new GraphicsPath();
-            shape.AddRoundedRectangle(new Rectangle(1, 1, Width - 2, Height - 2), new Size(16, 16));
+            shape.AddRoundedRectangle(new Rectangle(1, 1, Width - 2, Height - 2), new Size(Math.Max(4, (int)(16 * scale)), Math.Max(4, (int)(16 * scale))));
             using var fill = new SolidBrush(Color.FromArgb(27, 37, 54));
             using var border = new Pen(Color.FromArgb(94, 119, 154));
             e.Graphics.FillPath(fill, shape);
             e.Graphics.DrawPath(border, shape);
             using var line = new Pen(Color.FromArgb(62, 82, 111));
-            e.Graphics.DrawLine(line, 18, 52, Width - 18, 52);
-            using var nameFont = new Font("Segoe UI", 9);
-            using var timeFont = new Font("Segoe UI Semibold", 13, FontStyle.Bold);
+            e.Graphics.DrawLine(line, 18 * scale, 52 * scale, Width - 18 * scale, 52 * scale);
+            using var nameFont = new Font("Segoe UI", 12f * scale, FontStyle.Regular, GraphicsUnit.Pixel);
+            using var timeFont = new Font("Segoe UI Semibold", 17.3f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
             var local = DateTimeOffset.Now;
             var remote = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
             var flags = TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter;
-            TextRenderer.DrawText(e.Graphics, "Hier", nameFont, new Rectangle(16, 12, 123, 28), Color.FromArgb(171, 193, 225), flags);
-            TextRenderer.DrawText(e.Graphics, local.ToString("HH:mm", German), timeFont, new Rectangle(141, 10, 63, 29), Color.White,
+            TextRenderer.DrawText(e.Graphics, Localization.IsGerman ? "Hier" : "Here", nameFont, Rect(16, 12, 123, 28), Color.FromArgb(171, 193, 225), flags);
+            TextRenderer.DrawText(e.Graphics, local.ToString("HH:mm", German), timeFont, Rect(141, 10, 63, 29), Color.White,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(label) ? zone.StandardName : label, nameFont,
-                new Rectangle(16, 62, 123, 28), Color.FromArgb(171, 193, 225), flags);
-            TextRenderer.DrawText(e.Graphics, remote.ToString("HH:mm", German), timeFont, new Rectangle(141, 60, 63, 29), Color.White,
+                Rect(16, 62, 123, 28), Color.FromArgb(171, 193, 225), flags);
+            TextRenderer.DrawText(e.Graphics, remote.ToString("HH:mm", German), timeFont, Rect(141, 60, 63, 29), Color.White,
                 TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
@@ -444,23 +523,25 @@ sealed class HiddenProgramsDialog : Form
 
     public HiddenProgramsDialog(IEnumerable<string> selectedPaths)
     {
-        Text = "Programme auf der Taskleiste ausblenden";
+        Text = Localization.T("Hide programs from the taskbar", "Programme auf der Taskleiste ausblenden");
         StartPosition = FormStartPosition.CenterParent;
         ClientSize = new Size(680, 460);
         MinimumSize = new Size(500, 320);
-        list.Columns.Add("Programm", 180);
-        list.Columns.Add("Pfad", 460);
+        list.Columns.Add(Localization.T("Program", "Programm"), 180);
+        list.Columns.Add(Localization.T("Path", "Pfad"), 460);
         var selected = new HashSet<string>(selectedPaths, StringComparer.OrdinalIgnoreCase);
         var paths = AppWindows.List().Select(w => w.Path).Concat(selected).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(System.IO.Path.GetFileName);
         foreach (var path in paths) AddPath(path, selected.Contains(path));
-        var info = new Label { Text = "Häkchen = Schaltfläche ausblenden. Laufende Programme stehen in der Liste; weitere EXE-Dateien kannst du hinzufügen.", AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(12, 10, 12, 10) };
+        var info = new Label { Text = Localization.T("Check an item to hide its button. Running programs appear here; you can also add more EXE files.",
+            "Häkchen = Schaltfläche ausblenden. Laufende Programme stehen in der Liste; weitere EXE-Dateien kannst du hinzufügen."), AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(12, 10, 12, 10) };
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 48, Padding = new Padding(8) };
-        var ok = new Button { Text = "Speichern", DialogResult = DialogResult.OK, AutoSize = true };
-        var cancel = new Button { Text = "Abbrechen", DialogResult = DialogResult.Cancel, AutoSize = true };
-        var browse = new Button { Text = "EXE hinzufügen…", AutoSize = true };
+        var ok = new Button { Text = Localization.T("Save", "Speichern"), DialogResult = DialogResult.OK, AutoSize = true };
+        var cancel = new Button { Text = Localization.T("Cancel", "Abbrechen"), DialogResult = DialogResult.Cancel, AutoSize = true };
+        var browse = new Button { Text = Localization.T("Add EXE…", "EXE hinzufügen…"), AutoSize = true };
         browse.Click += (_, _) =>
         {
-            using var pick = new OpenFileDialog { Filter = "Programme (*.exe)|*.exe", CheckFileExists = true, Title = "Programm auswählen" };
+            using var pick = new OpenFileDialog { Filter = Localization.T("Programs (*.exe)|*.exe", "Programme (*.exe)|*.exe"),
+                CheckFileExists = true, Title = Localization.T("Choose program", "Programm auswählen") };
             if (pick.ShowDialog(this) == DialogResult.OK) AddPath(pick.FileName, true);
         };
         buttons.Controls.AddRange([ok, cancel, browse]);
