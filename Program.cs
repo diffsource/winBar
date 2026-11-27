@@ -61,7 +61,7 @@ static class Taskbar
     // tap\TaskbarTap.dll (loaded into explorer like TranslucentTB does) fades that XAML background out.
     static readonly Guid TapClsid = new("3F0F7A5E-8E3B-4C1D-9B2A-6D1E5C7A9B42");
     static readonly string TapDll = Path.Combine(AppContext.BaseDirectory, "TaskbarTap.dll");
-    static int connection, injecting;
+    static int injecting;
     static long nextInject;
 
     static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap", null); // HWND_MESSAGE
@@ -76,8 +76,13 @@ static class Taskbar
         GetWindowThreadProcessId(FindWindow("Shell_TrayWnd", null), out var pid);
         Task.Run(() =>
         {
-            // Each connection name works once per explorer process.
-            try { if (pid != 0) InitializeXamlDiagnosticsEx($"VisualDiagConnection{Interlocked.Increment(ref connection)}", pid, null, TapDll, TapClsid, null); }
+            // Explorer only accepts its own endpoint names (VisualDiagConnection1, 2, ...) and rejects others with
+            // ERROR_NOT_FOUND; names are reusable, so scan from 1 instead of counting up across explorer restarts.
+            try
+            {
+                for (int i = 1; pid != 0 && i <= 100; i++)
+                    if (InitializeXamlDiagnosticsEx($"VisualDiagConnection{i}", pid, null, TapDll, TapClsid, null) != unchecked((int)0x80070490)) break;
+            }
             catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
             finally { injecting = 0; }
         });
