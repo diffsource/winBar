@@ -6,6 +6,8 @@
 
 [Download the latest release](https://github.com/diffsource/winBar/releases/latest/download/TaskbarTweaker.zip) · [See all releases](https://github.com/diffsource/winBar/releases) · [Report an issue](https://github.com/diffsource/winBar/issues)
 
+![winBar glass taskbar themes for Windows 11: Glass, Glacier, Ink, and Adaptive](docs/themes.png)
+
 ## Get started
 
 1. Install the [.NET 10 Desktop Runtime for Windows x64](https://dotnet.microsoft.com/download/dotnet/10.0) if you do not already have it.
@@ -31,6 +33,12 @@ A short welcome tour appears on first use. To reopen settings later, **hold Alt 
 | **Automatic updates** | Check stable GitHub releases in the background, verify the download, and use the new version on the next normal launch. No forced restart. |
 
 You can also set taskbar alignment, grouping, auto-hide, Search, Widgets, Copilot, Chat/Teams, the desktop corner, and other Windows taskbar options. Some Windows settings need an Explorer restart before they appear.
+
+### App stacks in action
+
+Choose a contiguous range of Windows pins. The first pin stays as a small anchor; hovering it reveals the group. The editor previews the result before you apply it.
+
+<img src="docs/app-stacks.png" alt="winBar App Stacks editor with a compact glass taskbar preview and four pinned apps grouped together" width="560">
 
 ### Useful shortcuts
 
