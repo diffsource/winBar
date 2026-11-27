@@ -62,26 +62,40 @@ static class Taskbar
     static readonly Guid TapClsid = new("3F0F7A5E-8E3B-4C1D-9B2A-6D1E5C7A9B42");
     static readonly string TapDll = Path.Combine(AppContext.BaseDirectory, "TaskbarTap.dll");
     static int injecting;
+    static uint injectedPid;
     static long nextInject;
 
-    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap", null); // HWND_MESSAGE
+    // Class name carries a version: an older TaskbarTap.dll still loaded in explorer does not know newer messages.
+    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap2", null); // HWND_MESSAGE
 
-    public static void HideXamlBackground(bool hide)
+    // hideBackground: fade the XAML background. trayMask: tray parts to collapse (bits as in TaskbarTap.cpp kParts).
+    public static void Tap(bool hideBackground, int trayMask)
     {
         var w = TapWindow();
-        if (w != IntPtr.Zero) { PostMessage(w, 0x8000, hide ? 1 : 0, IntPtr.Zero); return; } // WM_APP
-        if (!hide || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
+        if (w != IntPtr.Zero)
+        {
+            PostMessage(w, 0x8000, hideBackground ? 1 : 0, IntPtr.Zero); // WM_APP
+            PostMessage(w, 0x8001, trayMask, IntPtr.Zero);                // WM_APP + 1
+            return;
+        }
+        if ((!hideBackground && trayMask == 0) || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
         if (Environment.TickCount64 < nextInject || Interlocked.Exchange(ref injecting, 1) == 1) return;
         nextInject = Environment.TickCount64 + 5000; // explorer may still be starting; retry later
         GetWindowThreadProcessId(FindWindow("Shell_TrayWnd", null), out var pid);
+        // Injected fine but no window: an old DLL from the same path is loaded. Re-injecting would only stack it up.
+        if (pid == 0 || pid == injectedPid) { injecting = 0; return; }
         Task.Run(() =>
         {
             // Explorer only accepts its own endpoint names (VisualDiagConnection1, 2, ...) and rejects others with
             // ERROR_NOT_FOUND; names are reusable, so scan from 1 instead of counting up across explorer restarts.
             try
             {
-                for (int i = 1; pid != 0 && i <= 100; i++)
-                    if (InitializeXamlDiagnosticsEx($"VisualDiagConnection{i}", pid, null, TapDll, TapClsid, null) != unchecked((int)0x80070490)) break;
+                for (int i = 1; i <= 100; i++)
+                {
+                    int hr = InitializeXamlDiagnosticsEx($"VisualDiagConnection{i}", pid, null, TapDll, TapClsid, null);
+                    if (hr == 0) injectedPid = pid;
+                    if (hr != unchecked((int)0x80070490)) break;
+                }
             }
             catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException) { }
             finally { injecting = 0; }
@@ -118,6 +132,7 @@ class Settings
     public int Style { get; set; }
     public int Color { get; set; } = 0x40000000;
     public bool HideTaskbar { get; set; }
+    public int TrayHide { get; set; } // bit mask, see TaskbarTap.cpp kParts
 
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarTweaker");
     static string FilePath => Path.Combine(Dir, "settings.json");
@@ -224,6 +239,23 @@ class MainForm : Form
         }
         Add(new Label { Text = "Manche Änderungen greifen erst nach Explorer-Neustart.", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 8, 3, 0) });
 
+        Header("Experimentell: Infobereich ausblenden");
+        (string Label, int Bit)[] trayParts =
+        [
+            ("Uhr und Datum", 1),
+            ("Schnelleinstellungen (WLAN, Lautstärke, Akku)", 2),
+            ("Tray-Icons und ^-Pfeil", 4),
+            ("Sprachanzeige", 8),
+            ("Gesamten Infobereich", 16),
+        ];
+        foreach (var (label, bit) in trayParts)
+        {
+            var c = Check(label, (s.TrayHide & bit) != 0);
+            c.CheckedChanged += (_, _) => { s.TrayHide = c.Checked ? s.TrayHide | bit : s.TrayHide & ~bit; s.Save(); };
+            resets.Add(() => c.Checked = false);
+        }
+        Add(new Label { Text = "Greift direkt in die Windows-Oberfläche ein und kann nach Windows-Updates nicht mehr funktionieren. Nach einem App-Update einmal Explorer neu starten.", AutoSize = true, MaximumSize = new Size(LogicalToDeviceUnits(520), 0), ForeColor = SystemColors.GrayText, Margin = new Padding(3, 8, 3, 0) });
+
         Header("Aktionen");
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var restart = new Button { Text = "Explorer neu starten", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
@@ -257,7 +289,7 @@ class MainForm : Form
         timer.Tick += (_, _) =>
         {
             if (s.Style > 0) Taskbar.SetAccent(AccentFor[s.Style], s.Style == 1 ? 0 : Taskbar.ToAbgr(s.Color));
-            Taskbar.HideXamlBackground(s.Style > 0);
+            Taskbar.Tap(s.Style > 0, s.TrayHide);
             if (s.HideTaskbar) Taskbar.Show(false);
         };
         timer.Start();
@@ -278,7 +310,7 @@ class MainForm : Form
         exiting = true;
         timer.Stop();
         Taskbar.SetAccent(0, 0);
-        Taskbar.HideXamlBackground(false);
+        Taskbar.Tap(false, 0);
         Taskbar.Show(true);
         tray.Visible = false;
         Application.Exit();

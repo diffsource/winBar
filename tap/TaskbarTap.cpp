@@ -1,8 +1,11 @@
 // XAML diagnostics TAP that TaskbarTweaker loads into explorer.exe via InitializeXamlDiagnosticsEx.
 // Windows 11 draws the taskbar background in XAML on top of the window, which hides any accent set with
 // SetWindowCompositionAttribute. This DLL fades out that XAML background so the accent shows through.
-// Control: message-only window "TaskbarTweakerTap", WM_APP with wParam 1 = hide, 0 = restore.
-// The reply is the number of background elements found (0 means the XAML tree did not match).
+// It can also collapse parts of the system tray (clock, quick settings, ...).
+// Control: message-only window "TaskbarTweakerTap2".
+//   WM_APP:     wParam 1 = hide background, 0 = restore. Reply: number of background elements found.
+//   WM_APP + 1: wParam = bit mask of kParts to hide. Reply: number of tray elements found.
+// A reply of 0 means the XAML tree did not match.
 #include <windows.h>
 #undef GetCurrentTime // clashes with Storyboard::GetCurrentTime in C++/WinRT
 #include <unknwn.h>
@@ -28,36 +31,67 @@ extern "C" IMAGE_DOS_HEADER __ImageBase;
 // {3F0F7A5E-8E3B-4C1D-9B2A-6D1E5C7A9B42}, must match TaskbarTweaker's TapClsid.
 static constexpr CLSID CLSID_Tap = { 0x3f0f7a5e, 0x8e3b, 0x4c1d, { 0x9b, 0x2a, 0x6d, 0x1e, 0x5c, 0x7a, 0x9b, 0x42 } };
 
+// Tray parts, matched by XAML type and name (Windows 11 24H2+/26xxx tree). bit is the WM_APP + 1 mask bit.
+struct Part { const wchar_t* type; const wchar_t* name; int bit; };
+static constexpr Part kParts[] =
+{
+    { L"SystemTray.OmniButton", L"NotificationCenterButton", 1 },         // clock/date (+ bell)
+    { L"SystemTray.OmniButton", L"ControlCenterButton", 2 },              // Wi-Fi / volume / battery
+    { L"SystemTray.NotificationAreaIcons", L"NotificationAreaIcons", 4 }, // app tray icons
+    { L"SystemTray.Stack", L"NotifyIconStack", 4 },                       // ^ overflow chevron
+    { L"SystemTray.Stack", L"NonActivatableStack", 8 },                   // language indicator
+    { L"SystemTray.SystemTrayFrame", L"", 16 },                           // whole tray
+};
+
 struct Item
 {
     InstanceHandle handle;
     weak_ref<UIElement> element;
     winrt::Windows::System::DispatcherQueue queue{ nullptr };
+    int bit; // 0 = taskbar background, else kParts bit
 };
 
 static std::mutex g_lock;
 static std::vector<Item> g_items;
 static bool g_hidden = true;
+static int g_mask;
 static HWND g_wnd;
 
+static bool IsHidden(int bit) { return bit == 0 ? g_hidden : (g_mask & bit) != 0; } // caller holds g_lock
+
 // Runs on the element's UI thread.
-static void Apply(UIElement const& e, bool hidden)
+// shortcut: un-hiding sets Visible instead of restoring explorer's own value; restart explorer if a part looks wrong.
+static void Apply(UIElement const& e, int bit, bool hidden)
 {
-    e.Opacity(hidden ? 0.0 : 1.0);
+    if (bit == 0) e.Opacity(hidden ? 0.0 : 1.0);
+    else e.Visibility(hidden ? Visibility::Collapsed : Visibility::Visible);
 }
 
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
 {
-    if (msg != WM_APP) return DefWindowProcW(h, msg, w, l);
+    if (msg != WM_APP && msg != WM_APP + 1) return DefWindowProcW(h, msg, w, l);
     std::lock_guard lock(g_lock);
-    bool hidden = w != 0;
-    if (hidden != g_hidden)
+    int changed = 0; // bit 0 of "changed" stands for the background here, tray bits shifted up by one
+    if (msg == WM_APP)
     {
-        g_hidden = hidden;
-        for (auto& it : g_items)
-            it.queue.TryEnqueue([el = it.element, hidden] { if (auto e = el.get()) Apply(e, hidden); });
+        bool hidden = w != 0;
+        if (hidden != g_hidden) { g_hidden = hidden; changed = 1; }
     }
-    return g_items.size();
+    else
+    {
+        int mask = static_cast<int>(w);
+        changed = (mask ^ g_mask) << 1;
+        g_mask = mask;
+    }
+    size_t found = 0;
+    for (auto& it : g_items)
+    {
+        if ((it.bit == 0) != (msg == WM_APP)) continue;
+        found++;
+        if (changed & (it.bit == 0 ? 1 : it.bit << 1))
+            it.queue.TryEnqueue([el = it.element, bit = it.bit, hidden = IsHidden(it.bit)] { if (auto e = el.get()) Apply(e, bit, hidden); });
+    }
+    return found;
 }
 
 static void CreateControlWindow()
@@ -67,7 +101,7 @@ static void CreateControlWindow()
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
-    wc.lpszClassName = L"TaskbarTweakerTap";
+    wc.lpszClassName = L"TaskbarTweakerTap2";
     RegisterClassW(&wc);
     g_wnd = CreateWindowExW(0, wc.lpszClassName, nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, inst, nullptr);
 }
@@ -119,25 +153,33 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
                 std::erase_if(g_items, [&](Item const& it) { return it.handle == el.Handle; });
                 return S_OK;
             }
-            if (!el.Name || (wcscmp(el.Name, L"BackgroundFill") != 0 && wcscmp(el.Name, L"BackgroundStroke") != 0)) return S_OK;
+            const wchar_t* name = el.Name ? el.Name : L"";
+            const wchar_t* type = el.Type ? el.Type : L"";
+            int bit = -1;
+            if (!wcscmp(name, L"BackgroundFill") || !wcscmp(name, L"BackgroundStroke")) bit = 0;
+            else for (auto& p : kParts) if (!wcscmp(type, p.type) && !wcscmp(name, p.name)) bit = p.bit;
+            if (bit < 0) return S_OK;
 
             com_ptr<::IInspectable> obj;
             if (FAILED(diag->GetIInspectableFromHandle(el.Handle, obj.put()))) return S_OK;
             UIElement e{ nullptr };
-            if (FAILED(obj->QueryInterface(guid_of<UIElement>(), put_abi(e))) || !InTaskbarBackground(e)) return S_OK;
+            if (FAILED(obj->QueryInterface(guid_of<UIElement>(), put_abi(e))) || (bit == 0 && !InTaskbarBackground(e))) return S_OK;
 
-            // Explorer resets the opacity on theme or state changes; force it back while hidden.
-            e.RegisterPropertyChangedCallback(UIElement::OpacityProperty(), [](DependencyObject const& o, DependencyProperty const&)
+            // Explorer resets opacity/visibility on theme or state changes; force it back while hidden.
+            e.RegisterPropertyChangedCallback(bit == 0 ? UIElement::OpacityProperty() : UIElement::VisibilityProperty(),
+                [bit](DependencyObject const& o, DependencyProperty const&)
             {
                 bool hidden;
-                { std::lock_guard lock(g_lock); hidden = g_hidden; }
+                { std::lock_guard lock(g_lock); hidden = IsHidden(bit); }
+                if (!hidden) return;
                 auto u = o.as<UIElement>();
-                if (hidden && u.Opacity() != 0.0) u.Opacity(0.0);
+                if (bit == 0 ? u.Opacity() != 0.0 : u.Visibility() != Visibility::Collapsed) Apply(u, bit, true);
             });
 
             std::lock_guard lock(g_lock);
-            g_items.push_back({ el.Handle, make_weak(e), winrt::Windows::System::DispatcherQueue::GetForCurrentThread() });
-            Apply(e, g_hidden);
+            g_items.push_back({ el.Handle, make_weak(e), winrt::Windows::System::DispatcherQueue::GetForCurrentThread(), bit });
+            // Tray parts are only touched when hidden, so explorer's own visibility stays as is otherwise.
+            if (bit == 0 || IsHidden(bit)) Apply(e, bit, IsHidden(bit));
         }
         catch (...) {}
         return S_OK;

@@ -20,6 +20,12 @@ Elemente ein- und ausblenden, automatisch ausblenden und mehr. Läuft im Tray un
 - Badges, blinkende Apps, Sekunden in der Uhr, Desktop-anzeigen-Ecke
 - Taskleiste auf allen Monitoren, „Task beenden“ im Rechtsklickmenü
 
+**Experimentell: Infobereich ausblenden**
+- Uhr und Datum, Schnelleinstellungen (WLAN/Lautstärke/Akku), Tray-Icons mit ^-Pfeil, Sprachanzeige
+  oder den gesamten Infobereich ausblenden
+- Greift direkt in die XAML-Oberfläche der Taskleiste ein und kann nach Windows-Updates aufhören zu funktionieren.
+  Nach einem Update der App einmal „Explorer neu starten“, damit die neue `TaskbarTap.dll` geladen wird.
+
 **Aktionen**
 - Explorer neu starten
 - Alles auf Standard zurücksetzen
@@ -42,6 +48,7 @@ dabei wird die Taskleiste wiederhergestellt.
   und alle 100 ms erneut angewendet, weil Explorer ihn oft zurücksetzt.
 - Windows 11 zeichnet den Taskleisten-Hintergrund in XAML über das Fenster. `TaskbarTap.dll` wird dafür
   per `InitializeXamlDiagnosticsEx` in `explorer.exe` geladen und blendet diesen Hintergrund aus.
+  Dieselbe DLL blendet auf Wunsch Teile des Infobereichs aus (`Visibility = Collapsed`).
 - Die Elemente-Einstellungen sind normale Registry-Werte unter `HKCU`. Manche greifen erst nach einem
   Explorer-Neustart.
 
