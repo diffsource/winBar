@@ -12,6 +12,7 @@ static class Program
         Debug.Assert(Taskbar.ToAbgr(unchecked((int)0x80112233)) == unchecked((int)0x80332211));
         ApplicationConfiguration.Initialize();
         Application.SetColorMode(SystemColorMode.System); // follow Windows light/dark setting
+        if (args.Contains("--folders")) { FolderStackTaskbarLauncher.RunPopup(); return; }
         Application.Run(new MainForm(args.Contains("--tray")));
     }
 }
@@ -606,7 +607,20 @@ class MainForm : Form
         };
         var openFolders = new Button { Text = "Ordnerstapel öffnen", AutoSize = true };
         openFolders.Click += (_, _) => OpenFolderStack();
-        folderActions.Controls.AddRange([addFolder, removeFolder, openFolders]);
+        var pinFolders = new Button { Text = "Taskleisten-Button erstellen…", AutoSize = true };
+        pinFolders.Click += (_, _) =>
+        {
+            try
+            {
+                var path = FolderStackTaskbarLauncher.CreateShortcut();
+                FolderStackTaskbarLauncher.RevealShortcut(path);
+                MessageBox.Show(this, "Die Verknüpfung wurde erstellt. Klicke sie im Explorer mit rechts an und wähle ‚An Taskleiste anheften‘.",
+                    "winBar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Reflection.TargetInvocationException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            { MessageBox.Show(this, $"Taskleisten-Verknüpfung konnte nicht erstellt werden:\n{ex.Message}", "winBar", MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        };
+        folderActions.Controls.AddRange([addFolder, removeFolder, openFolders, pinFolders]);
         Add(folderActions);
         Add(new Label { Text = "Ein kleines Fach für bis zu 20 Ordner. Strg+Alt+O öffnet es ohne Einstellungen.", AutoSize = true, ForeColor = SystemColors.GrayText });
         var choosePrograms = new Button { Text = "Programme auf der Taskleiste ausblenden…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
@@ -890,7 +904,9 @@ class MainForm : Form
         void EvaluateAutomaticScenes()
         {
             var localNow = DateTime.Now;
-            var rule = SceneRuleEvaluator.Select(s.SceneRules, localNow, Screen.AllScreens.Length);
+            var screens = Screen.AllScreens;
+            var rule = SceneRuleEvaluator.Select(s.SceneRules, localNow, screens.Length,
+                screens.Select(screen => screen.DeviceName).ToArray());
             var scene = rule == null ? null : s.Scenes.FirstOrDefault(item => item.Id == rule.SceneId);
             if (scene != null && scene.Id != activeAutoSceneId)
             {

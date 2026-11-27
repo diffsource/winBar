@@ -76,7 +76,7 @@ sealed class ReleaseUpdater
             {
                 WorkingDirectory = directory,
                 UseShellExecute = true,
-                ArgumentList = { args.Contains("--tray") ? "--tray" : "--updated" }
+                ArgumentList = { args.Contains("--folders") ? "--folders" : args.Contains("--tray") ? "--tray" : "--updated" }
             });
             return true;
         }

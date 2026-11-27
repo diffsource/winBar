@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>TaskbarTweaker</AssemblyName>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <!-- TaskbarTap.dll is x64 and loads into explorer, so the app must be x64 too. -->
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

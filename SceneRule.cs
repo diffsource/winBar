@@ -7,14 +7,17 @@ internal sealed class SceneRule
     public int Priority { get; set; }
     public int MinMonitorCount { get; set; } = 1;
     public int? MaxMonitorCount { get; set; }
+    public string? MonitorDeviceName { get; set; }
     public TimeOnly? StartLocalTime { get; set; }
     public TimeOnly? EndLocalTime { get; set; }
     public int[]? DaysOfWeek { get; set; } // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 
-    public bool Matches(DateTime localNow, int monitorCount)
+    public bool Matches(DateTime localNow, int monitorCount, IReadOnlyCollection<string>? monitorDeviceNames = null)
     {
         if (!Enabled || Version != 1 || string.IsNullOrWhiteSpace(SceneId)) return false;
         if (monitorCount < Math.Max(1, MinMonitorCount) || monitorCount > (MaxMonitorCount ?? int.MaxValue)) return false;
+        if (!string.IsNullOrWhiteSpace(MonitorDeviceName) &&
+            (monitorDeviceNames == null || !monitorDeviceNames.Contains(MonitorDeviceName, StringComparer.OrdinalIgnoreCase))) return false;
         if (StartLocalTime is not { } start || EndLocalTime is not { } end)
             return IncludesDay(localNow.DayOfWeek);
         var time = TimeOnly.FromDateTime(localNow);
@@ -29,8 +32,9 @@ internal sealed class SceneRule
 
 internal static class SceneRuleEvaluator
 {
-    public static SceneRule? Select(IEnumerable<SceneRule> rules, DateTime localNow, int monitorCount) =>
-        rules.Where(rule => rule.Matches(localNow, monitorCount))
+    public static SceneRule? Select(IEnumerable<SceneRule> rules, DateTime localNow, int monitorCount,
+        IReadOnlyCollection<string>? monitorDeviceNames = null) =>
+        rules.Where(rule => rule.Matches(localNow, monitorCount, monitorDeviceNames))
             .OrderByDescending(rule => rule.Priority)
             .ThenByDescending(rule => rule.MinMonitorCount)
             .FirstOrDefault();

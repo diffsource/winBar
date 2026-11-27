@@ -17,6 +17,8 @@ internal sealed class SceneManagerDialog : Form
     readonly CheckBox automatic = new();
     readonly CheckBox monitorOnly = new();
     readonly NumericUpDown monitorCount = new();
+    readonly ComboBox monitorDevice = new();
+    readonly string[] monitorNames;
     readonly CheckBox timed = new();
     readonly DateTimePicker startTime = new();
     readonly DateTimePicker endTime = new();
@@ -39,6 +41,9 @@ internal sealed class SceneManagerDialog : Form
         this.visibleStackIds = [.. (visibleStackIds ?? [])];
         Scenes = JsonSerializer.Deserialize<List<SceneSnapshot>>(JsonSerializer.Serialize(scenes ?? [])) ?? [];
         Rules = JsonSerializer.Deserialize<List<SceneRule>>(JsonSerializer.Serialize(rules ?? [])) ?? [];
+        monitorNames = Screen.AllScreens.Select(screen => screen.DeviceName)
+            .Concat(Rules.Select(rule => rule.MonitorDeviceName).OfType<string>())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
         Text = "winBar · Szenen";
         ClientSize = new Size(700, 560);
@@ -177,6 +182,14 @@ internal sealed class SceneManagerDialog : Form
         monitorCount.Width = 64;
         monitorCount.ValueChanged += (_, _) => RuleChanged();
         Add(monitorCount, 1, row++);
+        monitorDevice.DropDownStyle = ComboBoxStyle.DropDownList;
+        monitorDevice.Items.Add("Beliebiger Monitor");
+        foreach (var device in monitorNames) monitorDevice.Items.Add(device);
+        monitorDevice.SelectedIndex = 0;
+        monitorDevice.Width = 170;
+        monitorDevice.SelectedIndexChanged += (_, _) => RuleChanged();
+        Add(Label("Bestimmter Monitor"), 0, row);
+        Add(monitorDevice, 1, row++);
         timed.Text = "Nur zu bestimmten Zeiten";
         timed.AutoSize = true;
         timed.CheckedChanged += (_, _) => RuleChanged();
@@ -284,6 +297,8 @@ internal sealed class SceneManagerDialog : Form
             automatic.Checked = rule?.Enabled == true;
             monitorOnly.Checked = rule != null && rule.MinMonitorCount > 1;
             monitorCount.Value = Math.Clamp(rule?.MinMonitorCount ?? 2, 2, 8);
+            monitorDevice.SelectedIndex = Math.Max(0, Array.FindIndex(monitorNames,
+                device => string.Equals(device, rule?.MonitorDeviceName, StringComparison.OrdinalIgnoreCase)) + 1);
             timed.Checked = rule?.StartLocalTime != null && rule.EndLocalTime != null;
             startTime.Value = DateTime.Today.Add((rule?.StartLocalTime ?? new TimeOnly(9, 0)).ToTimeSpan());
             endTime.Value = DateTime.Today.Add((rule?.EndLocalTime ?? new TimeOnly(17, 0)).ToTimeSpan());
@@ -302,6 +317,7 @@ internal sealed class SceneManagerDialog : Form
     {
         monitorOnly.Enabled = timed.Enabled = automatic.Checked;
         monitorCount.Enabled = automatic.Checked && monitorOnly.Checked;
+        monitorDevice.Enabled = automatic.Checked;
         startTime.Enabled = endTime.Enabled = days.Enabled = automatic.Checked && timed.Checked;
     }
 
@@ -324,6 +340,7 @@ internal sealed class SceneManagerDialog : Form
         rule.Enabled = true;
         rule.MinMonitorCount = monitorOnly.Checked ? (int)monitorCount.Value : 1;
         rule.MaxMonitorCount = null;
+        rule.MonitorDeviceName = monitorDevice.SelectedIndex > 0 ? monitorNames[monitorDevice.SelectedIndex - 1] : null;
         rule.StartLocalTime = timed.Checked ? TimeOnly.FromDateTime(startTime.Value) : null;
         rule.EndLocalTime = timed.Checked ? TimeOnly.FromDateTime(endTime.Value) : null;
         rule.DaysOfWeek = !timed.Checked || days.SelectedIndex == 0 ? null : days.SelectedIndex == 1 ? [1, 2, 3, 4, 5] : [0, 6];

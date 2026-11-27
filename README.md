@@ -26,8 +26,8 @@ A short welcome tour appears on first use. To reopen settings later, **hold Alt 
 | **Right side on demand** | Set clock, Quick Settings, tray icons, and language indicator independently to **Always**, **On demand**, or **Off**. On-demand items appear with Alt or when you approach the right edge. |
 | **Clean preset** | Hide Search, Widgets, Task View, badges, and tray clutter together. Click again to restore the previous values. |
 | **Clock and media** | Show a styled time display, reveal a second time zone on hover, and optionally show a slim media progress line with controls on hover. |
-| **Folder shelf** | Open up to 20 selected folders from a compact popup with **Ctrl + Alt + O** or the tray menu. |
-| **Scenes** | Save complete taskbar arrangements and switch manually or by monitor count and local time window. Existing Work/Personal profiles and **Ctrl + Alt + 1/2** still work. |
+| **Folder shelf** | Open up to 20 selected folders from a compact popup with **Ctrl + Alt + O**, the tray menu, or your own pinned taskbar button. |
+| **Scenes** | Save complete taskbar arrangements and switch manually, by monitor count, a specific connected display, or a local time window. Existing Work/Personal profiles and **Ctrl + Alt + 1/2** still work. |
 | **Presentation mode** | Hide the right side and selected private app buttons with **Ctrl + Alt + P** while sharing your screen. |
 | **Hide app buttons** | Choose running programs or EXE files whose taskbar buttons should be hidden. Their windows remain open and accessible with Alt + Tab. |
 | **Automatic updates** | Check stable GitHub releases in the background, verify the download, and use the new version on the next normal launch. No forced restart. |
@@ -56,11 +56,13 @@ Choose a contiguous range of Windows pins. The first pin stays as a small anchor
 - **Windows 11 x64** is the target. The Explorer helper uses Windows 11 XAML internals, so a Windows update may temporarily break some effects. If a new version changes the helper, restart Explorer when convenient to load the new DLL.
 - The app's current interface and first-use tour are in German; this README is in English for the wider Windows community.
 - **App stacks and on-demand pinned apps** use Windows 11 XAML internals and are experimental. A stack covers adjacent pin positions in the current Windows order; it does not freely regroup arbitrary pins. The first pin is its anchor. Stack groups take precedence over the older pinned-app reveal option.
+- **Folder shelf taskbar button:** In Settings, add folders and choose **Taskleisten-Button erstellen**. winBar creates a Start-menu shortcut and shows it in Explorer so you can pin it to the Windows taskbar. Clicking the pinned shortcut opens the folder shelf near that position; its small helper process exits when you close the popup. Windows controls where the pinned button appears.
 - **Auto compact** estimates crowding from taskbar width, configured pins, and running windows. It does not rearrange your Windows pins.
 - **Hiding an app** affects its running taskbar buttons by full EXE path. It does not unpin the app, and some programs manage their own buttons.
+- **Individual tray app icons** still follow Windows Taskbar Settings. winBar controls the clock, Quick Settings cluster, app-icon area, and language indicator as groups; Windows does not expose the Wi-Fi, volume, and battery icons there as separate controls.
 - **The clock** sits over the Windows clock and lets clicks reach Windows. It hides during full-screen use. The second time zone appears only on hover.
 - **Presentation mode** changes taskbar visibility only. It does not hide open windows or replace your screen-sharing app's privacy controls.
-- **Scenes** can react to the number of connected monitors; they apply one taskbar arrangement at a time. The music line and folder shelf are optional and do no media or folder work while disabled.
+- **Scenes** can react to the number of connected monitors or the Windows device name of a specific display; they apply one taskbar arrangement at a time. A display renamed or reconnected under another device name may need its rule updated. The music line and folder shelf are optional and do no media or folder work while disabled.
 - **Automatic updates** download from this repository's stable GitHub Releases. They are enabled by default and can be switched off in Settings. The first release with this feature is v1.0.2; earlier versions need one manual update. A staged update starts next time you launch winBar, so the current session is uninterrupted.
 - Settings are stored in `%AppData%\TaskbarTweaker\settings.json`. Exported profiles and scenes can include full EXE paths; review them before sharing. Exported **themes** contain appearance values only.
 
