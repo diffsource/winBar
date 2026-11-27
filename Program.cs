@@ -342,7 +342,6 @@ class MainForm : Form
         new("Taskleiste auf allen Monitoren", Adv, "MMTaskbarEnabled", 1),
         new("\"Task beenden\" im Rechtsklickmenü", Adv + @"\TaskbarDeveloperSettings", "TaskbarEndTask", 0),
     ];
-    static readonly int[] AccentFor = [0, 2, 2, 3, 4];
     static readonly Dictionary<string, int> CleanValues = new()
     {
         ["SearchboxTaskbarMode"] = 0,

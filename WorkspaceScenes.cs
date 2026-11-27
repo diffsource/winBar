@@ -144,6 +144,7 @@ sealed class WorkspaceManagerDialog : Form
 {
     readonly Settings settings;
     readonly ListBox list = new();
+    readonly Label emptyState = new();
     readonly Label status = new();
     readonly CancellationTokenSource stop = new();
 
@@ -171,6 +172,13 @@ sealed class WorkspaceManagerDialog : Form
         list.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         list.DisplayMember = nameof(WorkspaceScene.Name);
         Controls.Add(list);
+        emptyState.Text = "Noch keine Arbeitsbereiche.\nKlicke auf „Neu aus offenen Apps“, um einen anzulegen.";
+        emptyState.TextAlign = ContentAlignment.MiddleCenter;
+        emptyState.ForeColor = Color.FromArgb(105, 119, 142);
+        emptyState.BackColor = Color.White;
+        emptyState.Location = new Point(60, 163);
+        emptyState.Size = new Size(412, 64);
+        Controls.Add(emptyState);
         var create = Button("Neu aus offenen Apps…", 22, 302, 172);
         create.Click += (_, _) => CreateScene();
         var launch = Button("Öffnen", 204, 302, 90);
@@ -183,7 +191,10 @@ sealed class WorkspaceManagerDialog : Form
         status.Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         Controls.Add(status);
         foreach (var scene in settings.Workspaces ?? []) list.Items.Add(scene);
+        RefreshEmptyState();
     }
+
+    void RefreshEmptyState() => emptyState.Visible = list.Items.Count == 0;
 
     Button Button(string text, int x, int y, int width)
     {
@@ -203,6 +214,7 @@ sealed class WorkspaceManagerDialog : Form
         settings.Save();
         list.Items.Add(scene);
         list.SelectedItem = scene;
+        RefreshEmptyState();
         status.Text = $"{scene.Apps.Count} Apps und {scene.Windows.Count} Fenster gespeichert.";
     }
 
@@ -224,6 +236,7 @@ sealed class WorkspaceManagerDialog : Form
         settings.Workspaces?.Remove(scene);
         settings.Save();
         list.Items.Remove(scene);
+        RefreshEmptyState();
         status.Text = "Arbeitsbereich entfernt.";
     }
 
@@ -235,6 +248,7 @@ sealed class WorkspaceCaptureDialog : Form
     readonly TextBox name = new();
     readonly CheckedListBox apps = new();
     readonly List<string> paths = [];
+    readonly ToolTip pathTip = new();
     public string SceneName => name.Text;
     public IEnumerable<string> SelectedApps => apps.CheckedIndices.Cast<int>().Select(index => paths[index]);
 
@@ -244,6 +258,7 @@ sealed class WorkspaceCaptureDialog : Form
         ClientSize = new Size(590, 450);
         StartPosition = FormStartPosition.CenterParent;
         Font = new Font("Segoe UI", 10);
+        BackColor = Color.FromArgb(246, 248, 252);
         Controls.Add(new Label { Text = "Name", Location = new Point(20, 18), Size = new Size(100, 25) });
         name.Location = new Point(20, 45);
         name.Size = new Size(545, 29);
@@ -258,6 +273,11 @@ sealed class WorkspaceCaptureDialog : Form
         apps.Location = new Point(20, 146);
         apps.Size = new Size(545, 230);
         apps.CheckOnClick = true;
+        apps.MouseMove += (_, e) =>
+        {
+            int index = apps.IndexFromPoint(e.Location);
+            pathTip.SetToolTip(apps, index >= 0 && index < paths.Count ? paths[index] : "");
+        };
         Controls.Add(apps);
         foreach (var app in AppWindows.List().GroupBy(w => w.Path, StringComparer.OrdinalIgnoreCase).Select(g => g.First())) AddPath(app.Path);
         var browse = new Button { Text = "EXE hinzufügen…", Location = new Point(20, 390), Size = new Size(145, 34) };
@@ -277,11 +297,15 @@ sealed class WorkspaceCaptureDialog : Form
         AcceptButton = save;
     }
 
+    protected override void OnFormClosed(FormClosedEventArgs e) { pathTip.Dispose(); base.OnFormClosed(e); }
+
     void AddPath(string path, bool select = false)
     {
         if (paths.Contains(path, StringComparer.OrdinalIgnoreCase)) return;
         paths.Add(path);
-        int index = apps.Items.Add($"{Path.GetFileName(path)}    ·    {path}");
+        var parent = Path.GetFileName(Path.GetDirectoryName(path)) ?? "";
+        if (parent.Length > 28) parent = parent[..27] + "…";
+        int index = apps.Items.Add($"{Path.GetFileName(path)}    ·    {parent}");
         if (select) apps.SetItemChecked(index, true);
     }
 }
