@@ -91,34 +91,45 @@ sealed class AltSettingsButton : Form
 sealed class DesignClock : IDisposable
 {
     readonly List<ClockPill> pills = [];
-    string? zoneId;
-    TimeZoneInfo? secondZone;
+    readonly Dictionary<string, TimeZoneInfo?> zones = new(StringComparer.OrdinalIgnoreCase);
 
     public void Update(int layout, bool primaryOnly, string? secondTimeZoneId = null, string? secondTimeZoneLabel = null)
     {
-        if (zoneId != secondTimeZoneId)
-        {
-            zoneId = secondTimeZoneId;
-            try { secondZone = string.IsNullOrWhiteSpace(zoneId) ? null : TimeZoneInfo.FindSystemTimeZoneById(zoneId); }
-            catch (TimeZoneNotFoundException) { secondZone = null; }
-            catch (InvalidTimeZoneException) { secondZone = null; }
-        }
-        var bars = layout != 0
-            ? Taskbar.VisibleBounds().Where(r => r.Width > r.Height * 3 && r.Height >= 32 && !Taskbar.CoveredByFullscreenWindow(r) && (!primaryOnly || Screen.FromRectangle(r).Primary)).ToArray()
-            : [];
+        Update(screen => new MonitorClock(primaryOnly && !screen.Primary ? 0 : layout,
+            secondTimeZoneId, secondTimeZoneLabel));
+    }
+
+    public void Update(Func<Screen, MonitorClock> selectClock)
+    {
+        var bars = Taskbar.VisibleBounds()
+            .Where(r => r.Width > r.Height * 3 && r.Height >= 32 && !Taskbar.CoveredByFullscreenWindow(r))
+            .Select(r => (Bounds: r, Clock: selectClock(Screen.FromRectangle(r))))
+            .Where(item => item.Clock.Layout is 1 or 2).ToArray();
         while (pills.Count > bars.Length) { pills[^1].Close(); pills.RemoveAt(pills.Count - 1); }
         for (int i = 0; i < bars.Length; i++)
         {
             if (i == pills.Count) pills.Add(new ClockPill());
             var pill = pills[i];
-            var bar = bars[i];
-            pill.SetLayout(layout);
+            var bar = bars[i].Bounds;
+            var config = bars[i].Clock;
+            pill.SetLayout(config.Layout);
             pill.Location = new Point(bar.Right - pill.Width - 9, bar.Top + (bar.Height - pill.Height) / 2);
-            pill.SetSecondZone(secondZone, secondTimeZoneLabel);
+            pill.SetSecondZone(FindZone(config.SecondaryTimeZoneId), config.SecondaryTimeZoneLabel);
             pill.RefreshTime();
             if (!pill.Visible) pill.Show();
             pill.UpdateHover(bar);
         }
+    }
+
+    TimeZoneInfo? FindZone(string? id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return null;
+        if (zones.TryGetValue(id, out var zone)) return zone;
+        try { zone = TimeZoneInfo.FindSystemTimeZoneById(id); }
+        catch (TimeZoneNotFoundException) { zone = null; }
+        catch (InvalidTimeZoneException) { zone = null; }
+        zones[id] = zone;
+        return zone;
     }
 
     public void Dispose() { foreach (var pill in pills) pill.Close(); pills.Clear(); }

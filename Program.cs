@@ -72,6 +72,7 @@ static class Taskbar
     static uint injectedPid;
     static long nextInject;
     static IntPtr lastTapWindow;
+    static IntPtr previewReceiver, lastPreviewRegisteredWindow;
     static bool? lastBackground, lastPinned;
     static int lastTrayMask = -1;
     static int lastKeepPinned = -1;
@@ -80,15 +81,30 @@ static class Taskbar
     static long nextPinnedRefresh;
 
     // Class name carries a version: an older TaskbarTap.dll still loaded in explorer does not know newer messages.
-    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap5", null); // HWND_MESSAGE
+    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap6", null); // HWND_MESSAGE
+    public static IntPtr NativeTapWindow => TapWindow();
+    public static bool SupportsMonitorLayouts => Environment.OSVersion.Version.Build >= 22000 && File.Exists(TapDll);
+
+    public static void SetPreviewReceiver(IntPtr handle)
+    {
+        if (previewReceiver == handle) return;
+        previewReceiver = handle;
+        lastPreviewRegisteredWindow = IntPtr.Zero;
+    }
 
     // hideBackground: fade XAML background; trayMask: tray parts; hidePinned: show pinned-only buttons on demand.
-    public static void Tap(bool hideBackground, int trayMask, bool hidePinned, int keepPinned, ulong stackRanges = 0, int stackFlags = 0)
+    public static void Tap(bool hideBackground, int trayMask, bool hidePinned, int keepPinned, ulong stackRanges = 0, int stackFlags = 0,
+        bool requireHelper = false)
     {
         var w = TapWindow();
         if (w != IntPtr.Zero)
         {
-            if (w != lastTapWindow) { lastTapWindow = w; lastBackground = lastPinned = null; lastTrayMask = lastKeepPinned = lastStackFlags = -1; lastStackRanges = ulong.MaxValue; }
+            if (w != lastTapWindow) { lastTapWindow = w; lastPreviewRegisteredWindow = IntPtr.Zero; lastBackground = lastPinned = null; lastTrayMask = lastKeepPinned = lastStackFlags = -1; lastStackRanges = ulong.MaxValue; }
+            if (previewReceiver != IntPtr.Zero && w != lastPreviewRegisteredWindow)
+            {
+                PostMessage(w, 0x8004, previewReceiver, IntPtr.Zero);
+                lastPreviewRegisteredWindow = w;
+            }
             if (lastBackground != hideBackground) { PostMessage(w, 0x8000, hideBackground ? 1 : 0, IntPtr.Zero); lastBackground = hideBackground; }
             if (lastTrayMask != trayMask) { PostMessage(w, 0x8001, trayMask, IntPtr.Zero); lastTrayMask = trayMask; }
             if (lastPinned != hidePinned || lastKeepPinned != keepPinned || (hidePinned && Environment.TickCount64 >= nextPinnedRefresh))
@@ -107,7 +123,9 @@ static class Taskbar
             return;
         }
         lastTapWindow = IntPtr.Zero;
-        if ((!hideBackground && trayMask == 0 && !hidePinned && stackRanges == 0) || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
+        lastPreviewRegisteredWindow = IntPtr.Zero;
+        if ((!requireHelper && !hideBackground && trayMask == 0 && !hidePinned && stackRanges == 0) ||
+            Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
         if (Environment.TickCount64 < nextInject || Interlocked.Exchange(ref injecting, 1) == 1) return;
         nextInject = Environment.TickCount64 + 5000; // explorer may still be starting; retry later
         GetWindowThreadProcessId(FindWindow("Shell_TrayWnd", null), out var pid);
@@ -234,6 +252,8 @@ class Settings
     public List<string> SharedThemes { get; set; } = [];
     public List<SceneSnapshot> Scenes { get; set; } = [];
     public List<SceneRule> SceneRules { get; set; } = [];
+    public List<WorkspaceScene> Workspaces { get; set; } = [];
+    public List<MonitorLayout> MonitorLayouts { get; set; } = [];
 
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarTweaker");
     static string FilePath => Path.Combine(Dir, "settings.json");
@@ -253,6 +273,8 @@ class Settings
             s.SharedThemes ??= [];
             s.Scenes ??= [];
             s.SceneRules ??= [];
+            s.Workspaces ??= [];
+            s.MonitorLayouts ??= [];
             s.Profiles ??= [null, null];
             while (s.Profiles.Count < 2) s.Profiles.Add(null);
             if (s.Profiles.Count > 2) s.Profiles.RemoveRange(2, s.Profiles.Count - 2);
@@ -336,6 +358,8 @@ class MainForm : Form
     readonly AltSettingsButton altButton;
     readonly DesignClock clock = new();
     readonly MediaRail mediaRail;
+    StackWindowPreviewPopup? stackPreview;
+    readonly CancellationTokenSource workspaceStop = new();
     readonly ProgramHider programHider = new();
     ReleaseUpdater? updater;
     readonly NotifyIcon tray;
@@ -354,7 +378,13 @@ class MainForm : Form
     string? activeAutoSceneId;
     SceneSnapshot? beforeAutoScene;
     int lastProfileHotkey;
-    int ActiveClockLayout => !s.HideTaskbar && !presentationMode && RightAreaModes.ClockVisible(s.RightModes!, rightRevealed) ? s.ClockLayout : 0;
+    void UpdateClocks() => clock.Update(screen =>
+    {
+        var visual = MonitorLayouts.Resolve(screen, s, s.MonitorLayouts);
+        var layout = !s.HideTaskbar && !presentationMode && visual.ClockAllowed &&
+            RightAreaModes.ClockVisible(s.RightModes!, rightRevealed) ? visual.ClockLayout : 0;
+        return new MonitorClock(layout, visual.SecondaryTimeZoneId);
+    });
     IEnumerable<string> CurrentHiddenPrograms => (s.HiddenPrograms ?? []).Concat(presentationMode ? s.PresentationHiddenPrograms ?? [] : []);
 
     public MainForm(bool startHidden)
@@ -517,10 +547,10 @@ class MainForm : Form
             s.ClockLayout = clockLayout.SelectedIndex;
             s.ShowDesignClock = s.ClockLayout != 0;
             s.Save();
-            clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+            UpdateClocks();
         };
         var primaryClock = Check("Design-Uhr nur auf dem Hauptmonitor", s.ClockOnPrimaryOnly);
-        primaryClock.CheckedChanged += (_, _) => { if (reverting) return; s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId); };
+        primaryClock.CheckedChanged += (_, _) => { if (reverting) return; s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); UpdateClocks(); };
         Add(new Label { Text = "Die Uhr liegt über der Windows-Uhr. Klicks gehen weiterhin an Windows.", AutoSize = true, ForeColor = SystemColors.GrayText });
         var timeZones = TimeZoneInfo.GetSystemTimeZones().ToArray();
         var timeZoneOptions = new[] { "Aus" }.Concat(timeZones.Select(zone => zone.DisplayName)).ToArray();
@@ -531,7 +561,7 @@ class MainForm : Form
             if (reverting) return;
             s.SecondaryTimeZoneId = secondaryZone.SelectedIndex == 0 ? null : timeZones[secondaryZone.SelectedIndex - 1].Id;
             s.Save();
-            clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+            UpdateClocks();
         };
         var mediaToggle = Check("Schmale Musik-Leiste bei Wiedergabe zeigen", s.ShowMediaRail);
         mediaToggle.CheckedChanged += (_, _) => { if (reverting) return; s.ShowMediaRail = mediaToggle.Checked; s.Save(); mediaRail.Update(s.ShowMediaRail, s.HideTaskbar); };
@@ -827,7 +857,7 @@ class MainForm : Form
             themePicker.SetSelectedTheme(ThemeCatalog.Match(s)?.Id);
             programHider.Update(CurrentHiddenPrograms);
             programHider.SetFocusLens(s.FocusLens, AltSettingsButton.AltDown, Taskbar.ForegroundWindow);
-            clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+            UpdateClocks();
             mediaRail.Update(s.ShowMediaRail, s.HideTaskbar);
             nextVisualRefresh = 0;
         }
@@ -895,6 +925,7 @@ class MainForm : Form
                 var visible = options.VisibleStackIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 foreach (var group in s.AppStacks.Groups) group.Enabled = visible.Contains(group.Id.ToString("N"));
             }
+            if (options.MonitorLayouts != null) s.MonitorLayouts = options.MonitorLayouts;
             Taskbar.AutoHide = options.AutoHide;
             s.Save();
             Taskbar.Notify();
@@ -911,7 +942,8 @@ class MainForm : Form
             if (scene != null && scene.Id != activeAutoSceneId)
             {
                 beforeAutoScene ??= SceneSnapshot.Capture("Vor automatischer Szene", s, s.RightModes, s.FocusLens,
-                    s.SecondaryTimeZoneId, s.AppStacks.Groups.Where(group => group.Enabled).Select(group => group.Id.ToString("N")));
+                    s.SecondaryTimeZoneId, s.AppStacks.Groups.Where(group => group.Enabled).Select(group => group.Id.ToString("N")),
+                    s.MonitorLayouts);
                 try { ApplyScene(scene); activeAutoSceneId = scene.Id; }
                 catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException or IOException) { }
             }
@@ -947,7 +979,27 @@ class MainForm : Form
             nextSceneCheck = 0;
         };
         Add(manageScenes);
-        Add(new Label { Text = "Eine Szene speichert Look, sichtbare Apps, Uhr und rechten Bereich. Regeln können auf Monitorzahl oder Uhrzeit reagieren.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        Add(new Label { Text = "Eine Szene speichert Look, sichtbare Apps, Uhr und rechten Bereich. Regeln können auf Monitor und Uhrzeit reagieren.", AutoSize = true, ForeColor = SystemColors.GrayText });
+
+        Header("Monitore");
+        var monitorSettings = new Button { Text = "Layout pro Monitor…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        monitorSettings.Click += (_, _) =>
+        {
+            using var dialog = new MonitorLayoutDialog(s, s.MonitorLayouts, Taskbar.SupportsMonitorLayouts);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            s.MonitorLayouts = dialog.Layouts;
+            s.Save();
+            nextVisualRefresh = nextClockRefresh = 0;
+            UpdateClocks();
+        };
+        Add(monitorSettings);
+        Add(new Label { Text = "Jeder Bildschirm kann eigenes Design, Uhr, rechte Seite und App-Stapel bekommen.", AutoSize = true, ForeColor = SystemColors.GrayText });
+
+        Header("Arbeitsbereiche");
+        var workspaces = new Button { Text = "Arbeitsbereiche einrichten…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        workspaces.Click += (_, _) => { using var dialog = new WorkspaceManagerDialog(s); dialog.ShowDialog(this); };
+        Add(workspaces);
+        Add(new Label { Text = "Apps und Fensteranordnung auf Knopfdruck wiederherstellen. Kein Hintergrund-Scan.", AutoSize = true, ForeColor = SystemColors.GrayText });
 
         Header("Aktionen");
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
@@ -1025,6 +1077,8 @@ class MainForm : Form
         menu.Items.Add(presentationMenu);
         var stackMenu = new ToolStripMenuItem("App-Stapel starten");
         menu.Items.Add(stackMenu);
+        var workspaceMenu = new ToolStripMenuItem("Arbeitsbereich öffnen");
+        menu.Items.Add(workspaceMenu);
         menu.Opening += (_, _) =>
         {
             stackMenu.DropDownItems.Clear();
@@ -1034,6 +1088,17 @@ class MainForm : Form
                 stackMenu.DropDownItems.Add(group.Name, null, (_, _) => LaunchStack(chosen));
             }
             stackMenu.Enabled = stackMenu.DropDownItems.Count > 0;
+            workspaceMenu.DropDownItems.Clear();
+            foreach (var scene in s.Workspaces)
+            {
+                var chosen = scene;
+                workspaceMenu.DropDownItems.Add(scene.Name, null, async (_, _) =>
+                {
+                    try { await WorkspaceController.RestoreAsync(chosen, workspaceStop.Token); }
+                    catch (OperationCanceledException) { }
+                });
+            }
+            workspaceMenu.Enabled = workspaceMenu.DropDownItems.Count > 0;
         };
         menu.Items.Add("Beenden", null, (_, _) => ExitApp());
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "winBar", Visible = true, ContextMenuStrip = menu };
@@ -1042,6 +1107,7 @@ class MainForm : Form
         // Poll only the Alt interaction frequently. The Explorer style and window list need less frequent work.
         timer.Tick += (_, _) =>
         {
+            Taskbar.SetPreviewReceiver(Handle);
             if (!updaterStarted) { updaterStarted = true; updater?.Start(); }
             long now = Environment.TickCount64;
             if (now >= nextSceneCheck) EvaluateAutomaticScenes();
@@ -1102,7 +1168,7 @@ class MainForm : Form
             if (now >= nextClockRefresh)
             {
                 nextClockRefresh = now + 500;
-                clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+                UpdateClocks();
                 mediaRail.Update(s.ShowMediaRail && !presentationMode, s.HideTaskbar);
             }
             bool openHotkeyDown = AltSettingsButton.OpenHotkeyDown;
@@ -1144,6 +1210,11 @@ class MainForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        if (message.Msg == 0x8005)
+        {
+            OnStackPreviewHover(message.WParam.ToInt32(), message.LParam != IntPtr.Zero);
+            return;
+        }
         if (message.Msg == 0x007E) nextSceneCheck = 0; // WM_DISPLAYCHANGE
         if (message.Msg is 0x0320 or 0x031A or 0x001A)
         {
@@ -1151,6 +1222,35 @@ class MainForm : Form
             nextVisualRefresh = 0;
         }
         base.WndProc(ref message);
+    }
+
+    void OnStackPreviewHover(int slot, bool entered)
+    {
+        var groups = s.AppStacks.ValidPackedGroups();
+        if ((uint)slot >= (uint)groups.Count || !s.AppStacks.Enabled || s.HideTaskbar || presentationMode)
+        {
+            stackPreview?.ScheduleClose();
+            return;
+        }
+        var group = groups[slot];
+        if (!entered)
+        {
+            if (stackPreview?.GroupId == group.Id) stackPreview.ScheduleClose();
+            return;
+        }
+        if (stackPreview is { IsDisposed: false } && stackPreview.GroupId == group.Id)
+        {
+            stackPreview.CancelClose();
+            return;
+        }
+        stackPreview?.Close();
+        var pointer = Cursor.Position;
+        var bar = Taskbar.VisibleBounds().FirstOrDefault(bounds => bounds.Contains(pointer));
+        var anchor = bar == Rectangle.Empty ? new Rectangle(pointer, new Size(1, 1)) :
+            new Rectangle(Math.Clamp(pointer.X - 24, bar.Left, Math.Max(bar.Left, bar.Right - 48)), bar.Top, 48, bar.Height);
+        var popup = StackWindowPreviewPopup.ShowFor(group, anchor);
+        stackPreview = popup;
+        popup.FormClosed += (_, _) => { if (ReferenceEquals(stackPreview, popup)) stackPreview = null; };
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1186,6 +1286,9 @@ class MainForm : Form
         altButton.Close();
         clock.Dispose();
         mediaRail.Dispose();
+        stackPreview?.Close();
+        Taskbar.SetPreviewReceiver(IntPtr.Zero);
+        workspaceStop.Cancel();
         programHider.Dispose();
         Taskbar.SetAccent(0, 0);
         Taskbar.Tap(false, 0, false, 0);

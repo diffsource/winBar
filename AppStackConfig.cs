@@ -14,23 +14,35 @@ sealed class AppStackConfig
 
     public ulong PackRanges()
     {
-        if (!Enabled) return 0;
         ulong packed = 0;
-        var occupied = new bool[32];
         int slot = 0;
+        foreach (var group in ValidPackedGroups())
+        {
+            int start = group.Start - 1;
+            int count = group.Count;
+            packed |= ((ulong)(uint)start | ((ulong)(uint)count << 5)) << (slot * 10);
+            slot++;
+        }
+        return packed;
+    }
+
+    public IReadOnlyList<AppStackGroup> ValidPackedGroups()
+    {
+        if (!Enabled) return [];
+        var accepted = new List<AppStackGroup>(4);
+        var occupied = new bool[32];
         foreach (var group in Groups ?? [])
         {
-            if (slot >= 4) break;
+            if (accepted.Count >= 4) break;
             if (!group.Enabled) continue;
             int start = group.Start - 1;
             int count = group.Count;
             if (start < 0 || start >= 32 || count < 2 || count > 31 || start + count > 32 ||
                 Enumerable.Range(start, count).Any(index => occupied[index])) continue;
             for (int i = start; i < start + count; i++) occupied[i] = true;
-            packed |= ((ulong)(uint)start | ((ulong)(uint)count << 5)) << (slot * 10);
-            slot++;
+            accepted.Add(group);
         }
-        return packed;
+        return accepted;
     }
 
     public AppStackConfig Copy() => new()

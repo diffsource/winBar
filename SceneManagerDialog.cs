@@ -246,7 +246,8 @@ internal sealed class SceneManagerDialog : Form
     void AddScene()
     {
         var name = $"Szene {Scenes.Count + 1}";
-        var scene = SceneSnapshot.Capture(name, current, rightModes, focusLens, secondaryTimeZoneId, visibleStackIds);
+        var scene = SceneSnapshot.Capture(name, current, rightModes, focusLens, secondaryTimeZoneId, visibleStackIds,
+            current.MonitorLayouts);
         Scenes.Add(scene);
         sceneList.Items.Add(scene);
         sceneList.SelectedItem = scene;
@@ -271,7 +272,8 @@ internal sealed class SceneManagerDialog : Form
         if (selectedScene == null) return;
         var original = selectedScene;
         int index = sceneList.SelectedIndex;
-        var replacement = SceneSnapshot.Capture(original.Name, current, rightModes, focusLens, secondaryTimeZoneId, visibleStackIds);
+        var replacement = SceneSnapshot.Capture(original.Name, current, rightModes, focusLens, secondaryTimeZoneId, visibleStackIds,
+            current.MonitorLayouts);
         replacement.Id = original.Id;
         Scenes[index] = replacement;
         loading = true;

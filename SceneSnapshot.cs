@@ -25,9 +25,11 @@ internal sealed class SceneSnapshot
     public bool AutoHide { get; set; }
     public List<string> HiddenPrograms { get; set; } = [];
     public List<string>? VisibleStackIds { get; set; }
+    public List<MonitorLayout>? MonitorLayouts { get; set; }
 
     public static SceneSnapshot Capture(string name, Settings settings, int[]? rightModes, bool focusLens,
-        string? secondaryTimeZoneId = null, IEnumerable<string>? visibleStackIds = null)
+        string? secondaryTimeZoneId = null, IEnumerable<string>? visibleStackIds = null,
+        IEnumerable<MonitorLayout>? monitorLayouts = null)
     {
         return new SceneSnapshot
         {
@@ -52,7 +54,8 @@ internal sealed class SceneSnapshot
             FocusLens = focusLens,
             AutoHide = Taskbar.AutoHide,
             HiddenPrograms = [.. (settings.HiddenPrograms ?? []).Where(Path.IsPathFullyQualified)],
-            VisibleStackIds = [.. (visibleStackIds ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase)]
+            VisibleStackIds = [.. (visibleStackIds ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase)],
+            MonitorLayouts = monitorLayouts?.Select(layout => layout.Copy()).ToList()
         };
     }
 
@@ -79,7 +82,7 @@ internal sealed class SceneSnapshot
         settings.CleanBackup = null;
         return new SceneOptions(NormalizeModes(RightModes), FocusLens, SecondaryTimeZoneId,
             VisibleStackIds?.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            AppStacksEnabled, AutoHide);
+            AppStacksEnabled, AutoHide, MonitorLayouts?.Select(layout => layout.Copy()).ToList());
     }
 
     public static string NormalizeName(string? name)
@@ -98,4 +101,4 @@ internal sealed class SceneSnapshot
 }
 
 internal sealed record SceneOptions(int[]? RightModes, bool FocusLens, string? SecondaryTimeZoneId,
-    string[]? VisibleStackIds, bool? AppStacksEnabled, bool AutoHide);
+    string[]? VisibleStackIds, bool? AppStacksEnabled, bool AutoHide, List<MonitorLayout>? MonitorLayouts);
