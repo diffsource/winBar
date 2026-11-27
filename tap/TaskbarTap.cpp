@@ -2,10 +2,10 @@
 // Windows 11 draws the taskbar background in XAML on top of the window, which hides any accent set with
 // SetWindowCompositionAttribute. This DLL fades out that XAML background so the accent shows through.
 // It can also collapse parts of the system tray (clock, quick settings, ...).
-// Control: message-only window "TaskbarTweakerTap3".
+// Control: message-only window "TaskbarTweakerTap4".
 //   WM_APP:     wParam 1 = hide background, 0 = restore. Reply: number of background elements found.
 //   WM_APP + 1: wParam = bit mask of kParts to hide. Reply: number of tray elements found.
-//   WM_APP + 2: wParam 1 = hide pinned-only app buttons, 0 = restore.
+//   WM_APP + 2: wParam bit 0 = hide pinned-only buttons, high bits = first N pinned buttons to keep.
 // A reply of 0 means the XAML tree did not match.
 #include <windows.h>
 #undef GetCurrentTime // clashes with Storyboard::GetCurrentTime in C++/WinRT
@@ -60,6 +60,7 @@ struct PinnedItem
     InstanceHandle handle; // IconPanel visual-tree handle
     weak_ref<FrameworkElement> button;
     weak_ref<VisualStateGroup> runningStates;
+    void* parentIdentity = nullptr; // UI-thread parent identity, used only for sibling ordering
     winrt::Windows::System::DispatcherQueue queue{ nullptr };
     bool hiddenByUs = false; // touched only on the button's UI thread
 };
@@ -70,6 +71,7 @@ static std::vector<std::shared_ptr<PinnedItem>> g_pinnedItems;
 static bool g_hidden = true;
 static int g_mask;
 static bool g_pinnedHidden;
+static int g_keepPinned;
 static HWND g_wnd;
 
 static bool IsHidden(int bit) { return bit == 0 ? g_hidden : (g_mask & bit) != 0; } // caller holds g_lock
@@ -92,8 +94,43 @@ static void ApplyPinned(std::shared_ptr<PinnedItem> const& item)
     auto state = group.CurrentState();
     if (!state) return;
     bool enabled;
-    { std::lock_guard lock(g_lock); enabled = g_pinnedHidden; }
-    bool shouldHide = enabled && state.Name() == L"NoRunningIndicator";
+    int keep;
+    std::vector<std::shared_ptr<PinnedItem>> siblings;
+    {
+        std::lock_guard lock(g_lock);
+        enabled = g_pinnedHidden;
+        keep = g_keepPinned;
+        if (enabled && keep > 0)
+            for (auto const& other : g_pinnedItems)
+                if (other->parentIdentity == item->parentIdentity) siblings.push_back(other);
+    }
+    bool pinnedOnly = state.Name() == L"NoRunningIndicator";
+    int pinnedBefore = 0;
+    if (enabled && pinnedOnly && keep > 0)
+    {
+        if (auto parent = Media::VisualTreeHelper::GetParent(button))
+        {
+            int count = Media::VisualTreeHelper::GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                auto child = Media::VisualTreeHelper::GetChild(parent, i).try_as<FrameworkElement>();
+                if (!child) continue;
+                if (child == button) break;
+                for (auto const& other : siblings)
+                {
+                    auto otherButton = other->button.get();
+                    auto otherGroup = other->runningStates.get();
+                    if (otherButton == child && otherGroup && otherGroup.CurrentState() &&
+                        otherGroup.CurrentState().Name() == L"NoRunningIndicator")
+                    {
+                        pinnedBefore++;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    bool shouldHide = enabled && pinnedOnly && pinnedBefore >= keep;
     if (shouldHide && !item->hiddenByUs && button.Visibility() == Visibility::Visible)
     {
         item->hiddenByUs = true;
@@ -113,8 +150,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
         std::vector<std::shared_ptr<PinnedItem>> items;
         {
             std::lock_guard lock(g_lock);
-            if (g_pinnedHidden == (w != 0)) return g_pinnedItems.size();
-            g_pinnedHidden = w != 0;
+            g_pinnedHidden = (w & 1) != 0;
+            g_keepPinned = static_cast<int>(w >> 1);
+            if (g_keepPinned > 10) g_keepPinned = 10;
             items = g_pinnedItems;
         }
         for (auto const& item : items)
@@ -153,7 +191,7 @@ static void CreateControlWindow()
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
-    wc.lpszClassName = L"TaskbarTweakerTap3";
+    wc.lpszClassName = L"TaskbarTweakerTap4";
     RegisterClassW(&wc);
     g_wnd = CreateWindowExW(0, wc.lpszClassName, nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, inst, nullptr);
 }
@@ -200,6 +238,7 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
             item->handle = el.Handle;
             item->button = make_weak(button);
             item->runningStates = make_weak(group);
+            item->parentIdentity = get_abi(Media::VisualTreeHelper::GetParent(button));
             item->queue = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
             {
                 std::lock_guard lock(g_lock);

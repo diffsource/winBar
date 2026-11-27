@@ -17,6 +17,9 @@ sealed class AltSettingsButton : Form
 
     public static bool OpenHotkeyDown => GetAsyncKeyState(VkControl) < 0 && GetAsyncKeyState(VkAlt) < 0 && GetAsyncKeyState(VkS) < 0;
     public static bool AltDown => GetAsyncKeyState(VkAlt) < 0;
+    public static int ProfileHotkey => GetAsyncKeyState(VkControl) < 0 && AltDown
+        ? GetAsyncKeyState(0x31) < 0 ? 1 : GetAsyncKeyState(0x32) < 0 ? 2 : 0
+        : 0;
 
     public AltSettingsButton(Action openSettings)
     {
