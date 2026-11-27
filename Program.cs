@@ -331,10 +331,10 @@ class MainForm : Form
             s.ClockLayout = clockLayout.SelectedIndex;
             s.ShowDesignClock = s.ClockLayout != 0;
             s.Save();
-            clock.Update(s.ClockLayout, s.ClockOnPrimaryOnly);
+            clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly);
         };
         var primaryClock = Check("Design-Uhr nur auf dem Hauptmonitor", s.ClockOnPrimaryOnly);
-        primaryClock.CheckedChanged += (_, _) => { s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); clock.Update(s.ClockLayout, s.ClockOnPrimaryOnly); };
+        primaryClock.CheckedChanged += (_, _) => { s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly); };
         Add(new Label { Text = "Die Uhr liegt über der Windows-Uhr. Klicks gehen weiterhin an Windows.", AutoSize = true, ForeColor = SystemColors.GrayText });
         var pinned = Check("Angeheftete Apps erst mit Alt zeigen (experimentell)", s.HidePinnedUntilAlt);
         pinned.CheckedChanged += (_, _) => { s.HidePinnedUntilAlt = pinned.Checked; s.Save(); nextVisualRefresh = 0; };
@@ -421,7 +421,7 @@ class MainForm : Form
                 {
                     foreach (var t in targets)
                         if (s.CleanBackup.Values.TryGetValue(t.Name, out int value)) t.Set(value);
-                    s.TrayHide = s.CleanBackup.TrayHide;
+                    s.TrayHide = (s.TrayHide & ~(4 | 8)) | (s.CleanBackup.TrayHide & (4 | 8));
                     s.CleanBackup = null;
                 }
                 Taskbar.Notify();
