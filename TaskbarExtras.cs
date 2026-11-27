@@ -16,6 +16,8 @@ sealed class AltSettingsButton : Form
     [StructLayout(LayoutKind.Sequential)] struct NativePoint { public int X, Y; }
 
     public static bool OpenHotkeyDown => GetAsyncKeyState(VkControl) < 0 && GetAsyncKeyState(VkAlt) < 0 && GetAsyncKeyState(VkS) < 0;
+    public static bool PresentationHotkeyDown => GetAsyncKeyState(VkControl) < 0 && GetAsyncKeyState(VkAlt) < 0 && GetAsyncKeyState(0x50) < 0;
+    public static bool FolderHotkeyDown => GetAsyncKeyState(VkControl) < 0 && GetAsyncKeyState(VkAlt) < 0 && GetAsyncKeyState(0x4F) < 0;
     public static bool AltDown => GetAsyncKeyState(VkAlt) < 0;
     public static int ProfileHotkey => GetAsyncKeyState(VkControl) < 0 && AltDown
         ? GetAsyncKeyState(0x31) < 0 ? 1 : GetAsyncKeyState(0x32) < 0 ? 2 : 0
@@ -89,9 +91,18 @@ sealed class AltSettingsButton : Form
 sealed class DesignClock : IDisposable
 {
     readonly List<ClockPill> pills = [];
+    string? zoneId;
+    TimeZoneInfo? secondZone;
 
-    public void Update(int layout, bool primaryOnly)
+    public void Update(int layout, bool primaryOnly, string? secondTimeZoneId = null, string? secondTimeZoneLabel = null)
     {
+        if (zoneId != secondTimeZoneId)
+        {
+            zoneId = secondTimeZoneId;
+            try { secondZone = string.IsNullOrWhiteSpace(zoneId) ? null : TimeZoneInfo.FindSystemTimeZoneById(zoneId); }
+            catch (TimeZoneNotFoundException) { secondZone = null; }
+            catch (InvalidTimeZoneException) { secondZone = null; }
+        }
         var bars = layout != 0
             ? Taskbar.VisibleBounds().Where(r => r.Width > r.Height * 3 && r.Height >= 32 && !Taskbar.CoveredByFullscreenWindow(r) && (!primaryOnly || Screen.FromRectangle(r).Primary)).ToArray()
             : [];
@@ -103,8 +114,10 @@ sealed class DesignClock : IDisposable
             var bar = bars[i];
             pill.SetLayout(layout);
             pill.Location = new Point(bar.Right - pill.Width - 9, bar.Top + (bar.Height - pill.Height) / 2);
+            pill.SetSecondZone(secondZone, secondTimeZoneLabel);
             pill.RefreshTime();
             if (!pill.Visible) pill.Show();
+            pill.UpdateHover(bar);
         }
     }
 
@@ -115,6 +128,9 @@ sealed class DesignClock : IDisposable
         static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
         string? lastMinute;
         int layout = 2;
+        TimeZoneInfo? secondZone;
+        string? secondZoneLabel;
+        ClockHoverCard? hoverCard;
 
         public ClockPill()
         {
@@ -157,6 +173,39 @@ sealed class DesignClock : IDisposable
             if (minute == lastMinute) return;
             lastMinute = minute;
             Invalidate();
+            hoverCard?.Invalidate();
+        }
+
+        public void SetSecondZone(TimeZoneInfo? zone, string? label)
+        {
+            if (secondZone == zone && secondZoneLabel == label) return;
+            secondZone = zone;
+            secondZoneLabel = label;
+            if (zone == null) { hoverCard?.Hide(); return; }
+            hoverCard?.SetZone(zone, label);
+        }
+
+        public void UpdateHover(Rectangle bar)
+        {
+            if (secondZone == null) { hoverCard?.Hide(); return; }
+            var cursor = Cursor.Position;
+            if (!Bounds.Contains(cursor) && (hoverCard == null || !hoverCard.Visible || !hoverCard.Bounds.Contains(cursor)))
+            {
+                hoverCard?.Hide();
+                return;
+            }
+            hoverCard ??= new ClockHoverCard(secondZone, secondZoneLabel);
+            var screen = Screen.FromRectangle(bar).Bounds;
+            int x = Math.Clamp(Right - hoverCard.Width, screen.Left + 8, screen.Right - hoverCard.Width - 8);
+            int y = bar.Top > screen.Top + screen.Height / 2 ? bar.Top - hoverCard.Height - 8 : bar.Bottom + 8;
+            hoverCard.Location = new Point(x, y);
+            if (!hoverCard.Visible) hoverCard.Show();
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            hoverCard?.Close();
+            base.OnFormClosed(e);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -177,6 +226,68 @@ sealed class DesignClock : IDisposable
             if (layout == 2)
                 TextRenderer.DrawText(e.Graphics, now.ToString("ddd, dd.MM.", German), dateFont, new Rectangle(4, 24, Width - 8, 13),
                     Color.FromArgb(165, 198, 245), TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+
+    sealed class ClockHoverCard : Form
+    {
+        static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
+        TimeZoneInfo zone;
+        string? label;
+
+        public ClockHoverCard(TimeZoneInfo zone, string? label)
+        {
+            this.zone = zone;
+            this.label = label;
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.Manual;
+            ShowInTaskbar = false;
+            TopMost = true;
+            Size = new Size(220, 104);
+            BackColor = Color.FromArgb(27, 37, 54);
+            DoubleBuffered = true;
+            Opacity = 0.98;
+            using var shape = new GraphicsPath();
+            shape.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(16, 16));
+            Region = new Region(shape);
+        }
+
+        public void SetZone(TimeZoneInfo value, string? displayLabel)
+        {
+            zone = value;
+            label = displayLabel;
+            Invalidate();
+        }
+
+        protected override bool ShowWithoutActivation => true;
+        protected override CreateParams CreateParams
+        {
+            get { var p = base.CreateParams; p.ExStyle |= 0x80 | 0x08000000 | 0x20; return p; }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var shape = new GraphicsPath();
+            shape.AddRoundedRectangle(new Rectangle(1, 1, Width - 2, Height - 2), new Size(16, 16));
+            using var fill = new SolidBrush(Color.FromArgb(27, 37, 54));
+            using var border = new Pen(Color.FromArgb(94, 119, 154));
+            e.Graphics.FillPath(fill, shape);
+            e.Graphics.DrawPath(border, shape);
+            using var line = new Pen(Color.FromArgb(62, 82, 111));
+            e.Graphics.DrawLine(line, 18, 52, Width - 18, 52);
+            using var nameFont = new Font("Segoe UI", 9);
+            using var timeFont = new Font("Segoe UI Semibold", 13, FontStyle.Bold);
+            var local = DateTimeOffset.Now;
+            var remote = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, zone);
+            var flags = TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter;
+            TextRenderer.DrawText(e.Graphics, "Hier", nameFont, new Rectangle(16, 12, 123, 28), Color.FromArgb(171, 193, 225), flags);
+            TextRenderer.DrawText(e.Graphics, local.ToString("HH:mm", German), timeFont, new Rectangle(141, 10, 63, 29), Color.White,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(label) ? zone.StandardName : label, nameFont,
+                new Rectangle(16, 62, 123, 28), Color.FromArgb(171, 193, 225), flags);
+            TextRenderer.DrawText(e.Graphics, remote.ToString("HH:mm", German), timeFont, new Rectangle(141, 60, 63, 29), Color.White,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 }
@@ -256,6 +367,8 @@ sealed class ProgramHider : IDisposable
     readonly ITaskbarList? taskbar;
     readonly Dictionary<IntPtr, string> hidden = [];
     HashSet<string> selected = new(StringComparer.OrdinalIgnoreCase);
+    bool focusLens, revealFocus;
+    IntPtr focusedWindow;
 
     public ProgramHider()
     {
@@ -269,20 +382,32 @@ sealed class ProgramHider : IDisposable
         Refresh();
     }
 
+    public void SetFocusLens(bool enabled, bool reveal, IntPtr foreground)
+    {
+        if (!enabled && !focusLens) return;
+        if (focusLens == enabled && revealFocus == reveal && focusedWindow == foreground) return;
+        focusLens = enabled;
+        revealFocus = reveal;
+        focusedWindow = foreground;
+        Refresh();
+    }
+
     public void Refresh()
     {
-        if (taskbar == null || (selected.Count == 0 && hidden.Count == 0)) return;
+        if (taskbar == null || (selected.Count == 0 && hidden.Count == 0 && !focusLens)) return;
         var windows = AppWindows.List();
         var current = windows.ToDictionary(w => w.Handle);
+        bool lensActive = focusLens && !revealFocus && current.ContainsKey(focusedWindow);
+        bool ShouldHide(AppWindow window) => selected.Contains(window.Path) || (lensActive && window.Handle != focusedWindow);
         foreach (var (hwnd, path) in hidden.ToArray())
         {
             if (!current.TryGetValue(hwnd, out var window) || !window.Path.Equals(path, StringComparison.OrdinalIgnoreCase))
             { hidden.Remove(hwnd); continue; }
-            if (selected.Contains(path)) continue;
+            if (ShouldHide(window)) continue;
             try { taskbar.AddTab(hwnd); } catch (COMException) { }
             hidden.Remove(hwnd);
         }
-        foreach (var window in windows.Where(w => selected.Contains(w.Path)))
+        foreach (var window in windows.Where(w => ShouldHide(w) && !hidden.ContainsKey(w.Handle)))
         {
             try { taskbar.DeleteTab(window.Handle); hidden[window.Handle] = window.Path; }
             catch (COMException) { }

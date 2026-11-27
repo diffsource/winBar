@@ -74,18 +74,20 @@ static class Taskbar
     static bool? lastBackground, lastPinned;
     static int lastTrayMask = -1;
     static int lastKeepPinned = -1;
+    static ulong lastStackRanges = ulong.MaxValue;
+    static int lastStackFlags = -1;
     static long nextPinnedRefresh;
 
     // Class name carries a version: an older TaskbarTap.dll still loaded in explorer does not know newer messages.
-    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap4", null); // HWND_MESSAGE
+    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap5", null); // HWND_MESSAGE
 
     // hideBackground: fade XAML background; trayMask: tray parts; hidePinned: show pinned-only buttons on demand.
-    public static void Tap(bool hideBackground, int trayMask, bool hidePinned, int keepPinned)
+    public static void Tap(bool hideBackground, int trayMask, bool hidePinned, int keepPinned, ulong stackRanges = 0, int stackFlags = 0)
     {
         var w = TapWindow();
         if (w != IntPtr.Zero)
         {
-            if (w != lastTapWindow) { lastTapWindow = w; lastBackground = lastPinned = null; lastTrayMask = lastKeepPinned = -1; }
+            if (w != lastTapWindow) { lastTapWindow = w; lastBackground = lastPinned = null; lastTrayMask = lastKeepPinned = lastStackFlags = -1; lastStackRanges = ulong.MaxValue; }
             if (lastBackground != hideBackground) { PostMessage(w, 0x8000, hideBackground ? 1 : 0, IntPtr.Zero); lastBackground = hideBackground; }
             if (lastTrayMask != trayMask) { PostMessage(w, 0x8001, trayMask, IntPtr.Zero); lastTrayMask = trayMask; }
             if (lastPinned != hidePinned || lastKeepPinned != keepPinned || (hidePinned && Environment.TickCount64 >= nextPinnedRefresh))
@@ -95,10 +97,16 @@ static class Taskbar
                 lastKeepPinned = keepPinned;
                 nextPinnedRefresh = Environment.TickCount64 + 5000;
             }
+            if (lastStackRanges != stackRanges || lastStackFlags != stackFlags)
+            {
+                PostMessage(w, 0x8003, (IntPtr)unchecked((long)stackRanges), (IntPtr)stackFlags);
+                lastStackRanges = stackRanges;
+                lastStackFlags = stackFlags;
+            }
             return;
         }
         lastTapWindow = IntPtr.Zero;
-        if ((!hideBackground && trayMask == 0 && !hidePinned) || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
+        if ((!hideBackground && trayMask == 0 && !hidePinned && stackRanges == 0) || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
         if (Environment.TickCount64 < nextInject || Interlocked.Exchange(ref injecting, 1) == 1) return;
         nextInject = Environment.TickCount64 + 5000; // explorer may still be starting; retry later
         GetWindowThreadProcessId(FindWindow("Shell_TrayWnd", null), out var pid);
@@ -140,6 +148,7 @@ static class Taskbar
     }
 
     public static bool ActiveWindowMaximized => IsZoomed(GetForegroundWindow());
+    public static IntPtr ForegroundWindow => GetForegroundWindow();
 
     static long nextTintRead;
     static int cachedTintRgb;
@@ -202,17 +211,28 @@ class Settings
     public bool ShowDesignClock { get; set; } // compatibility with settings saved before ClockLayout existed
     public int ClockLayout { get; set; } // 0 off, 1 time, 2 time and date
     public bool ClockOnPrimaryOnly { get; set; }
+    public string? SecondaryTimeZoneId { get; set; }
+    public bool ShowMediaRail { get; set; }
     public bool HidePinnedUntilAlt { get; set; }
+    public bool FocusLens { get; set; }
     public int KeepPinnedCount { get; set; }
     public bool TrayOnDemand { get; set; }
+    public int[]? RightModes { get; set; }
     public bool AutoContrast { get; set; }
+    public bool AppAccent { get; set; }
     public bool ContextStyle { get; set; }
     public int MaximizedStyle { get; set; } = 2;
     public CleanBackup? CleanBackup { get; set; }
     public List<string> HiddenPrograms { get; set; } = [];
+    public List<string> PresentationHiddenPrograms { get; set; } = [];
     public List<SavedProfile?> Profiles { get; set; } = [null, null];
     public bool WelcomeSeen { get; set; }
     public bool AutoUpdates { get; set; } = true;
+    public AppStackConfig AppStacks { get; set; } = new();
+    public List<string> FolderStackPaths { get; set; } = [];
+    public List<string> SharedThemes { get; set; } = [];
+    public List<SceneSnapshot> Scenes { get; set; } = [];
+    public List<SceneRule> SceneRules { get; set; } = [];
 
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarTweaker");
     static string FilePath => Path.Combine(Dir, "settings.json");
@@ -225,12 +245,19 @@ class Settings
             s.ClockLayout = Math.Clamp(s.ClockLayout, 0, 2);
             s.MaximizedStyle = Math.Clamp(s.MaximizedStyle, 0, 4);
             s.KeepPinnedCount = Math.Clamp(s.KeepPinnedCount, 0, 5);
+            s.RightModes = RightAreaModes.Normalize(s.RightModes, s.TrayHide, s.TrayOnDemand);
+            s.AppStacks ??= new();
+            s.FolderStackPaths ??= [];
+            s.PresentationHiddenPrograms ??= [];
+            s.SharedThemes ??= [];
+            s.Scenes ??= [];
+            s.SceneRules ??= [];
             s.Profiles ??= [null, null];
             while (s.Profiles.Count < 2) s.Profiles.Add(null);
             if (s.Profiles.Count > 2) s.Profiles.RemoveRange(2, s.Profiles.Count - 2);
             return s;
         }
-        catch { return new(); }
+        catch { return new() { RightModes = RightAreaModes.Default() }; }
     }
     public void Save() { Directory.CreateDirectory(Dir); File.WriteAllText(FilePath, JsonSerializer.Serialize(this)); }
 }
@@ -240,6 +267,7 @@ class CleanBackup
     public Dictionary<string, int> Values { get; set; } = [];
     public int TrayHide { get; set; }
     public bool TrayOnDemand { get; set; }
+    public int[]? RightModes { get; set; }
 }
 
 class SavedProfile
@@ -248,14 +276,20 @@ class SavedProfile
     public int Style { get; set; }
     public int Color { get; set; }
     public bool AutoContrast { get; set; }
+    public bool AppAccent { get; set; }
     public bool ContextStyle { get; set; }
     public int MaximizedStyle { get; set; } = 2;
     public int ClockLayout { get; set; }
     public bool ClockOnPrimaryOnly { get; set; }
+    public string? SecondaryTimeZoneId { get; set; }
+    public bool ShowMediaRail { get; set; }
     public bool HidePinnedUntilAlt { get; set; }
+    public bool FocusLens { get; set; }
+    public AppStackConfig? AppStacks { get; set; }
     public int KeepPinnedCount { get; set; }
     public int TrayHide { get; set; }
     public bool TrayOnDemand { get; set; }
+    public int[]? RightModes { get; set; }
     public bool AutoHide { get; set; }
     public Dictionary<string, int> Tweaks { get; set; } = [];
     public List<string> HiddenPrograms { get; set; } = [];
@@ -300,15 +334,27 @@ class MainForm : Form
     readonly System.Windows.Forms.Timer timer = new() { Interval = 100 };
     readonly AltSettingsButton altButton;
     readonly DesignClock clock = new();
+    readonly MediaRail mediaRail;
     readonly ProgramHider programHider = new();
     ReleaseUpdater? updater;
     readonly NotifyIcon tray;
     readonly TableLayoutPanel grid = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(16, 4, 24, 16) };
-    bool startHidden, exiting, reverting, openHotkeyWasDown, pinnedRevealed, lastPinnedHidden, lastMaximized, updaterStarted;
-    long nextProgramScan, nextVisualRefresh, nextClockRefresh;
+    bool startHidden, exiting, reverting, openHotkeyWasDown, pinnedRevealed, rightRevealed, lastPinnedHidden, lastMaximized, updaterStarted;
+    bool presentationMode, presentationHotkeyWasDown, folderHotkeyWasDown;
+    CheckBox? presentationToggle;
+    ToolStripMenuItem? presentationMenu;
+    long nextProgramScan, nextVisualRefresh, nextClockRefresh, rightRevealUntil, nextStackDensity;
     int lastAppliedStyle = -1;
     int lastEffectiveTrayMask = -1;
+    ulong appliedStackRanges = ulong.MaxValue;
+    int appliedStackFlags = -1;
+    bool stackCollapseActive = true;
+    long nextSceneCheck;
+    string? activeAutoSceneId;
+    SceneSnapshot? beforeAutoScene;
     int lastProfileHotkey;
+    int ActiveClockLayout => !s.HideTaskbar && !presentationMode && RightAreaModes.ClockVisible(s.RightModes!, rightRevealed) ? s.ClockLayout : 0;
+    IEnumerable<string> CurrentHiddenPrograms => (s.HiddenPrograms ?? []).Concat(presentationMode ? s.PresentationHiddenPrograms ?? [] : []);
 
     public MainForm(bool startHidden)
     {
@@ -323,8 +369,66 @@ class MainForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         Controls.Add(grid);
         altButton = new AltSettingsButton(OpenWindow);
+        mediaRail = new MediaRail(this);
 
+        Action? refreshAppearance = null;
         Header("Aussehen");
+        foreach (var json in s.SharedThemes.Take(16))
+            try { ThemeCatalog.RegisterShared(ThemePackage.Import(json)); }
+            catch (Exception ex) when (ex is InvalidDataException or JsonException) { }
+        var themePicker = new ThemePicker();
+        themePicker.SetSelectedTheme(ThemeCatalog.Match(s)?.Id);
+        themePicker.ThemeSelected += theme =>
+        {
+            ThemeCatalog.ApplyTo(s, theme);
+            s.Save();
+            refreshAppearance?.Invoke();
+            nextVisualRefresh = 0;
+        };
+        Add(themePicker);
+        var themeActions = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty };
+        var exportTheme = new Button { Text = "Design teilen…", AutoSize = true };
+        exportTheme.Click += (_, _) =>
+        {
+            using var file = new SaveFileDialog { Filter = "winBar-Design (*.json)|*.json", FileName = "winbar-design.json" };
+            if (file.ShowDialog(this) != DialogResult.OK) return;
+            var name = Path.GetFileNameWithoutExtension(file.FileName);
+            if (string.IsNullOrWhiteSpace(name)) name = "Eigenes Design";
+            name = name[..Math.Min(name.Length, 32)];
+            var color = Color.FromArgb(s.Color | unchecked((int)0xFF000000));
+            var current = ThemeCatalog.Match(s) ?? new ThemeDefinition("custom", name, "Eigenes winBar-Design",
+                s.Style, s.Color, s.AutoContrast, s.ContextStyle, s.MaximizedStyle, color, color, color);
+            try { ThemePackage.ExportFile(file.FileName, current); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { MessageBox.Show($"Design konnte nicht gespeichert werden:\n{ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        };
+        var importTheme = new Button { Text = "Design laden…", AutoSize = true };
+        importTheme.Click += (_, _) =>
+        {
+            using var file = new OpenFileDialog { Filter = "winBar-Design (*.json)|*.json", CheckFileExists = true };
+            if (file.ShowDialog(this) != DialogResult.OK) return;
+            try
+            {
+                var theme = ThemePackage.ImportFile(file.FileName);
+                if (!ThemeCatalog.RegisterShared(theme)) throw new InvalidDataException("Zu viele Designs gespeichert.");
+                var json = ThemePackage.Export(theme);
+                s.SharedThemes.RemoveAll(saved =>
+                {
+                    try { return ThemePackage.Import(saved).Id == theme.Id; }
+                    catch (InvalidDataException) { return false; }
+                });
+                s.SharedThemes.Add(json);
+                ThemeCatalog.ApplyTo(s, theme);
+                s.Save();
+                themePicker.RefreshThemes();
+                refreshAppearance?.Invoke();
+                nextVisualRefresh = 0;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            { MessageBox.Show($"Design konnte nicht geladen werden:\n{ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+        };
+        themeActions.Controls.AddRange([exportTheme, importTheme]);
+        Add(themeActions);
         var style = Combo("Stil", ["Standard", "Komplett transparent", "Farbe (getönt)", "Blur", "Acrylic"], s.Style);
         var colorBtn = new Button { FlatStyle = FlatStyle.Flat, AutoSize = true };
         colorBtn.Click += (_, _) =>
@@ -352,12 +456,15 @@ class MainForm : Form
         // Only Farbe/Blur/Acrylic use the color; "transparent" always sends 0.
         void ShowStyle()
         {
-            colorBtn.Enabled = colorLbl.Enabled = s.Style >= 2 && !s.AutoContrast;
+            colorBtn.Enabled = colorLbl.Enabled = s.Style >= 2 && !s.AutoContrast && !s.AppAccent;
             alpha.Enabled = alphaLbl.Enabled = s.Style >= 2;
         }
 
         var autoContrast = Check("Tönung an Windows-Akzent und hell/dunkel anpassen", s.AutoContrast);
         autoContrast.CheckedChanged += (_, _) => { if (reverting) return; s.AutoContrast = autoContrast.Checked; s.Save(); ShowStyle(); nextVisualRefresh = 0; };
+        var appAccent = Check("Tönung aus dem Symbol der aktiven App ableiten", s.AppAccent);
+        appAccent.CheckedChanged += (_, _) => { if (reverting) return; s.AppAccent = appAccent.Checked; s.Save(); ShowStyle(); nextVisualRefresh = 0; };
+        Add(new Label { Text = "Bei getönten Looks. Das App-Symbol wird nur beim Programmwechsel gelesen; die Farbe bleibt dezent.", AutoSize = true, ForeColor = SystemColors.GrayText });
 
         var looks = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty };
         foreach (var (label, lookStyle, lookColor) in new (string, int, int)[]
@@ -409,17 +516,99 @@ class MainForm : Form
             s.ClockLayout = clockLayout.SelectedIndex;
             s.ShowDesignClock = s.ClockLayout != 0;
             s.Save();
-            clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly);
+            clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
         };
         var primaryClock = Check("Design-Uhr nur auf dem Hauptmonitor", s.ClockOnPrimaryOnly);
-        primaryClock.CheckedChanged += (_, _) => { if (reverting) return; s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly); };
+        primaryClock.CheckedChanged += (_, _) => { if (reverting) return; s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId); };
         Add(new Label { Text = "Die Uhr liegt über der Windows-Uhr. Klicks gehen weiterhin an Windows.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        var timeZones = TimeZoneInfo.GetSystemTimeZones().ToArray();
+        var timeZoneOptions = new[] { "Aus" }.Concat(timeZones.Select(zone => zone.DisplayName)).ToArray();
+        int selectedZone = Array.FindIndex(timeZones, zone => zone.Id == s.SecondaryTimeZoneId) + 1;
+        var secondaryZone = Combo("Zweite Zeitzone bei Hover", timeZoneOptions, selectedZone);
+        secondaryZone.SelectedIndexChanged += (_, _) =>
+        {
+            if (reverting) return;
+            s.SecondaryTimeZoneId = secondaryZone.SelectedIndex == 0 ? null : timeZones[secondaryZone.SelectedIndex - 1].Id;
+            s.Save();
+            clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+        };
+        var mediaToggle = Check("Schmale Musik-Leiste bei Wiedergabe zeigen", s.ShowMediaRail);
+        mediaToggle.CheckedChanged += (_, _) => { if (reverting) return; s.ShowMediaRail = mediaToggle.Checked; s.Save(); mediaRail.Update(s.ShowMediaRail, s.HideTaskbar); };
         var pinned = Check("Angeheftete Apps erst mit Alt zeigen (experimentell)", s.HidePinnedUntilAlt);
         var favorites = Combo("Immer sichtbar", ["Keine", "Erstes Symbol", "Erste 2 Symbole", "Erste 3 Symbole", "Erste 4 Symbole", "Erste 5 Symbole"], s.KeepPinnedCount);
         favorites.Enabled = s.HidePinnedUntilAlt;
         pinned.CheckedChanged += (_, _) => { if (reverting) return; s.HidePinnedUntilAlt = pinned.Checked; favorites.Enabled = pinned.Checked; s.Save(); nextVisualRefresh = 0; };
         favorites.SelectedIndexChanged += (_, _) => { if (reverting) return; s.KeepPinnedCount = favorites.SelectedIndex; s.Save(); nextVisualRefresh = 0; };
         Add(new Label { Text = "Ordne deine Favoriten in Windows an den Anfang der angehefteten Apps. Laufende Apps bleiben sichtbar. Mit Alt erscheinen die übrigen Symbole, bis die Maus die Taskleiste verlässt.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        var focusLens = Check("Fokus-Linse: Nur aktive App und angeheftete Favoriten zeigen", s.FocusLens);
+        focusLens.CheckedChanged += (_, _) =>
+        {
+            if (reverting) return;
+            s.FocusLens = focusLens.Checked;
+            s.Save();
+            programHider.SetFocusLens(s.FocusLens, AltSettingsButton.AltDown, Taskbar.ForegroundWindow);
+        };
+        Add(new Label { Text = "Alt zeigt alle laufenden Apps. Wenn kein App-Fenster aktiv ist, bleiben alle erreichbar.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        presentationToggle = Check("Bildschirmfreigabe-Modus: rechten Bereich und private Apps verbergen", false);
+        presentationToggle.CheckedChanged += (_, _) => SetPresentationMode(presentationToggle.Checked);
+        var choosePrivate = new Button { Text = "Private Apps auswählen…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        choosePrivate.Click += (_, _) =>
+        {
+            using var dialog = new HiddenProgramsDialog(s.PresentationHiddenPrograms);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            s.PresentationHiddenPrograms = dialog.SelectedPaths;
+            s.Save();
+            if (presentationMode) programHider.Update(CurrentHiddenPrograms);
+        };
+        Add(choosePrivate);
+        Add(new Label { Text = "Strg+Alt+P schaltet den Modus schnell um. Alt+Tab hält alle Fenster erreichbar.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        var stackSettings = new Button { Text = "App-Stapel einrichten…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        stackSettings.Click += (_, _) =>
+        {
+            using var dialog = new StackSettingsDialog(s.AppStacks);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            s.AppStacks = dialog.Config;
+            s.Save();
+            pinned.Enabled = !s.AppStacks.Enabled;
+            favorites.Enabled = !s.AppStacks.Enabled && s.HidePinnedUntilAlt;
+            nextVisualRefresh = 0;
+        };
+        Add(stackSettings);
+        Add(new Label { Text = "Bis zu vier Stapel aus benachbarten Windows-Pins. Der erste Pin öffnet den Stapel bei Hover; laufende Apps bleiben sichtbar.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        pinned.Enabled = !s.AppStacks.Enabled;
+        favorites.Enabled = !s.AppStacks.Enabled && s.HidePinnedUntilAlt;
+        var folderList = new ListBox { Height = LogicalToDeviceUnits(82), IntegralHeight = false, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+        void RefreshFolders()
+        {
+            folderList.Items.Clear();
+            foreach (var path in s.FolderStackPaths) folderList.Items.Add(path);
+        }
+        RefreshFolders();
+        Add(folderList);
+        var folderActions = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty };
+        var addFolder = new Button { Text = "Ordner hinzufügen…", AutoSize = true };
+        addFolder.Click += (_, _) =>
+        {
+            using var dialog = new FolderBrowserDialog { Description = "Ordner für deinen Stapel auswählen" };
+            if (dialog.ShowDialog(this) != DialogResult.OK || s.FolderStackPaths.Count >= 20 ||
+                s.FolderStackPaths.Contains(dialog.SelectedPath, StringComparer.OrdinalIgnoreCase)) return;
+            s.FolderStackPaths.Add(dialog.SelectedPath);
+            s.Save();
+            RefreshFolders();
+        };
+        var removeFolder = new Button { Text = "Entfernen", AutoSize = true };
+        removeFolder.Click += (_, _) =>
+        {
+            if (folderList.SelectedIndex < 0) return;
+            s.FolderStackPaths.RemoveAt(folderList.SelectedIndex);
+            s.Save();
+            RefreshFolders();
+        };
+        var openFolders = new Button { Text = "Ordnerstapel öffnen", AutoSize = true };
+        openFolders.Click += (_, _) => OpenFolderStack();
+        folderActions.Controls.AddRange([addFolder, removeFolder, openFolders]);
+        Add(folderActions);
+        Add(new Label { Text = "Ein kleines Fach für bis zu 20 Ordner. Strg+Alt+O öffnet es ohne Einstellungen.", AutoSize = true, ForeColor = SystemColors.GrayText });
         var choosePrograms = new Button { Text = "Programme auf der Taskleiste ausblenden…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
         choosePrograms.Click += (_, _) =>
         {
@@ -427,11 +616,11 @@ class MainForm : Form
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             s.HiddenPrograms = dialog.SelectedPaths;
             s.Save();
-            programHider.Update(s.HiddenPrograms ?? []);
+            programHider.Update(CurrentHiddenPrograms);
         };
         Add(choosePrograms);
         Add(new Label { Text = "Fenster bleiben geöffnet; nur ihre Taskleisten-Schaltflächen werden ausgeblendet. Nicht jede App unterstützt dies.", AutoSize = true, ForeColor = SystemColors.GrayText });
-        programHider.Update(s.HiddenPrograms ?? []);
+        programHider.Update(CurrentHiddenPrograms);
 
         Header("Elemente");
         var resets = new List<Action>();
@@ -456,27 +645,32 @@ class MainForm : Form
         }
         Add(new Label { Text = "Manche Änderungen greifen erst nach Explorer-Neustart.", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 8, 3, 0) });
 
-        Header("Experimentell: Infobereich ausblenden");
-        var trayOnDemand = Check("Ausgeblendete Tray-Symbole bei Alt oder Mausnähe zeigen", s.TrayOnDemand);
-        trayOnDemand.CheckedChanged += (_, _) => { if (reverting) return; s.TrayOnDemand = trayOnDemand.Checked; s.Save(); nextVisualRefresh = 0; };
-        cleanControls.Add(trayOnDemand);
-        refreshControls.Add(() => trayOnDemand.Checked = s.TrayOnDemand);
+        Header("Rechter Bereich");
         (string Label, int Bit)[] trayParts =
         [
             ("Uhr und Datum", 1),
             ("Schnelleinstellungen (WLAN, Lautstärke, Akku)", 2),
             ("Tray-Icons und ^-Pfeil", 4),
             ("Sprachanzeige", 8),
-            ("Gesamten Infobereich", 16),
         ];
-        foreach (var (label, bit) in trayParts)
+        var rightModeControls = new ComboBox[4];
+        for (int i = 0; i < trayParts.Length; i++)
         {
-            var c = Check(label, (s.TrayHide & bit) != 0);
-            c.CheckedChanged += (_, _) => { if (reverting) return; s.TrayHide = c.Checked ? s.TrayHide | bit : s.TrayHide & ~bit; s.Save(); nextVisualRefresh = 0; };
-            resets.Add(() => c.Checked = false);
-            refreshControls.Add(() => c.Checked = (s.TrayHide & bit) != 0);
-            if (bit is 4 or 8) cleanControls.Add(c);
+            int index = i;
+            var c = Combo(trayParts[i].Label, ["Immer sichtbar", "Bei Alt oder Mausnähe", "Aus"], s.RightModes![i]);
+            rightModeControls[i] = c;
+            c.SelectedIndexChanged += (_, _) =>
+            {
+                if (reverting) return;
+                s.RightModes![index] = c.SelectedIndex;
+                s.Save();
+                nextVisualRefresh = nextClockRefresh = 0;
+            };
+            resets.Add(() => c.SelectedIndex = RightAreaModes.Always);
+            refreshControls.Add(() => c.SelectedIndex = s.RightModes![index]);
+            if (i is 2 or 3) cleanControls.Add(c);
         }
+        Add(new Label { Text = "Wichtige Symbole können sichtbar bleiben. Elemente auf Abruf erscheinen mit Alt oder am rechten Taskleistenrand und bleiben während der Bedienung offen.", AutoSize = true, MaximumSize = new Size(LogicalToDeviceUnits(520), 0), ForeColor = SystemColors.GrayText });
         UpdateCleanUi();
         void UpdateCleanUi()
         {
@@ -491,7 +685,7 @@ class MainForm : Form
             {
                 if (s.CleanBackup == null)
                 {
-                    var backup = new CleanBackup { TrayHide = s.TrayHide, TrayOnDemand = s.TrayOnDemand };
+                    var backup = new CleanBackup { TrayHide = s.TrayHide, TrayOnDemand = s.TrayOnDemand, RightModes = [.. s.RightModes!] };
                     foreach (var t in targets) backup.Values[t.Name] = t.Get();
                     try { foreach (var t in targets) t.Set(CleanValues[t.Name]); }
                     catch
@@ -501,6 +695,7 @@ class MainForm : Form
                     }
                     s.TrayHide |= 4 | 8;
                     s.TrayOnDemand = true;
+                    s.RightModes![2] = s.RightModes[3] = RightAreaModes.Peek;
                     s.CleanBackup = backup;
                 }
                 else
@@ -509,6 +704,7 @@ class MainForm : Form
                         if (s.CleanBackup.Values.TryGetValue(t.Name, out int value)) t.Set(value);
                     s.TrayHide = (s.TrayHide & ~(4 | 8)) | (s.CleanBackup.TrayHide & (4 | 8));
                     s.TrayOnDemand = s.CleanBackup.TrayOnDemand;
+                    s.RightModes = RightAreaModes.Normalize(s.CleanBackup.RightModes, s.TrayHide, s.TrayOnDemand);
                     s.CleanBackup = null;
                 }
                 Taskbar.Notify();
@@ -547,9 +743,13 @@ class MainForm : Form
         SavedProfile CaptureProfile() => new()
         {
             Style = s.Style, Color = s.Color, AutoContrast = s.AutoContrast,
+            AppAccent = s.AppAccent,
             ContextStyle = s.ContextStyle, MaximizedStyle = s.MaximizedStyle,
             ClockLayout = s.ClockLayout, ClockOnPrimaryOnly = s.ClockOnPrimaryOnly,
+            SecondaryTimeZoneId = s.SecondaryTimeZoneId, ShowMediaRail = s.ShowMediaRail,
             HidePinnedUntilAlt = s.HidePinnedUntilAlt, KeepPinnedCount = s.KeepPinnedCount,
+            FocusLens = s.FocusLens, RightModes = [.. s.RightModes!],
+            AppStacks = s.AppStacks.Copy(),
             TrayHide = s.TrayHide, TrayOnDemand = s.TrayOnDemand, AutoHide = Taskbar.AutoHide,
             Tweaks = Tweaks.ToDictionary(t => t.Name, t => t.Get()),
             HiddenPrograms = [.. (s.HiddenPrograms ?? [])],
@@ -566,13 +766,19 @@ class MainForm : Form
             s.Style = Math.Clamp(profile.Style, 0, 4);
             s.Color = profile.Color;
             s.AutoContrast = profile.AutoContrast;
+            s.AppAccent = profile.AppAccent;
             s.ContextStyle = profile.ContextStyle;
             s.MaximizedStyle = Math.Clamp(profile.MaximizedStyle, 0, 4);
             s.ClockLayout = Math.Clamp(profile.ClockLayout, 0, 2);
             s.ShowDesignClock = s.ClockLayout != 0;
             s.ClockOnPrimaryOnly = profile.ClockOnPrimaryOnly;
+            s.SecondaryTimeZoneId = profile.SecondaryTimeZoneId;
+            s.ShowMediaRail = profile.ShowMediaRail;
             s.HidePinnedUntilAlt = profile.HidePinnedUntilAlt;
             s.KeepPinnedCount = Math.Clamp(profile.KeepPinnedCount, 0, 5);
+            s.FocusLens = profile.FocusLens;
+            s.AppStacks = (profile.AppStacks ?? new AppStackConfig()).Copy();
+            s.RightModes = RightAreaModes.Normalize(profile.RightModes, profile.TrayHide, profile.TrayOnDemand);
             s.TrayHide = profile.TrayHide & 31;
             s.TrayOnDemand = profile.TrayOnDemand;
             s.HiddenPrograms = (profile.HiddenPrograms ?? []).Where(p => !string.IsNullOrWhiteSpace(p) && Path.IsPathFullyQualified(p)).ToList();
@@ -586,23 +792,32 @@ class MainForm : Form
                 style.SelectedIndex = s.Style;
                 alpha.Value = (s.Color >> 24) & 0xFF;
                 autoContrast.Checked = s.AutoContrast;
+                appAccent.Checked = s.AppAccent;
                 contextStyle.Checked = s.ContextStyle;
                 maximizedStyle.SelectedIndex = s.MaximizedStyle;
                 autoHide.Checked = Taskbar.AutoHide;
                 clockLayout.SelectedIndex = s.ClockLayout;
                 primaryClock.Checked = s.ClockOnPrimaryOnly;
+                secondaryZone.SelectedIndex = Array.FindIndex(timeZones, zone => zone.Id == s.SecondaryTimeZoneId) + 1;
+                mediaToggle.Checked = s.ShowMediaRail;
                 pinned.Checked = s.HidePinnedUntilAlt;
                 favorites.SelectedIndex = s.KeepPinnedCount;
+                focusLens.Checked = s.FocusLens;
                 foreach (var refresh in refreshControls) refresh();
             }
             finally { reverting = false; }
             maximizedStyle.Enabled = s.ContextStyle;
-            favorites.Enabled = s.HidePinnedUntilAlt;
+            pinned.Enabled = !s.AppStacks.Enabled;
+            favorites.Enabled = !s.AppStacks.Enabled && s.HidePinnedUntilAlt;
             ShowColor(); ShowAlpha(); ShowStyle(); UpdateCleanUi();
-            programHider.Update(s.HiddenPrograms ?? []);
-            clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly);
+            themePicker.SetSelectedTheme(ThemeCatalog.Match(s)?.Id);
+            programHider.Update(CurrentHiddenPrograms);
+            programHider.SetFocusLens(s.FocusLens, AltSettingsButton.AltDown, Taskbar.ForegroundWindow);
+            clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+            mediaRail.Update(s.ShowMediaRail, s.HideTaskbar);
             nextVisualRefresh = 0;
         }
+        refreshAppearance = SyncProfileUi;
         void ApplyProfile(int slot)
         {
             var profile = s.Profiles[slot];
@@ -654,6 +869,70 @@ class MainForm : Form
             }
         };
 
+        void ApplyScene(SceneSnapshot scene)
+        {
+            var options = scene.ApplyTo(s);
+            s.RightModes = RightAreaModes.Normalize(options.RightModes, s.TrayHide, s.TrayOnDemand);
+            s.FocusLens = options.FocusLens;
+            s.SecondaryTimeZoneId = options.SecondaryTimeZoneId;
+            if (options.AppStacksEnabled is bool enabled) s.AppStacks.Enabled = enabled;
+            if (options.VisibleStackIds != null)
+            {
+                var visible = options.VisibleStackIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var group in s.AppStacks.Groups) group.Enabled = visible.Contains(group.Id.ToString("N"));
+            }
+            Taskbar.AutoHide = options.AutoHide;
+            s.Save();
+            Taskbar.Notify();
+            SyncProfileUi();
+        }
+
+        void EvaluateAutomaticScenes()
+        {
+            var localNow = DateTime.Now;
+            var rule = SceneRuleEvaluator.Select(s.SceneRules, localNow, Screen.AllScreens.Length);
+            var scene = rule == null ? null : s.Scenes.FirstOrDefault(item => item.Id == rule.SceneId);
+            if (scene != null && scene.Id != activeAutoSceneId)
+            {
+                beforeAutoScene ??= SceneSnapshot.Capture("Vor automatischer Szene", s, s.RightModes, s.FocusLens,
+                    s.SecondaryTimeZoneId, s.AppStacks.Groups.Where(group => group.Enabled).Select(group => group.Id.ToString("N")));
+                try { ApplyScene(scene); activeAutoSceneId = scene.Id; }
+                catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException or IOException) { }
+            }
+            else if (scene == null && activeAutoSceneId != null)
+            {
+                if (beforeAutoScene != null)
+                    try { ApplyScene(beforeAutoScene); }
+                    catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException or IOException) { }
+                activeAutoSceneId = null;
+                beforeAutoScene = null;
+            }
+            var boundary = SceneRuleEvaluator.NextTimeBoundary(s.SceneRules, localNow);
+            int delay = boundary == null ? 60000 : (int)Math.Clamp((boundary.Value - localNow).TotalMilliseconds + 150, 1000, 60000);
+            nextSceneCheck = Environment.TickCount64 + delay;
+        }
+
+        Header("Szenen");
+        var manageScenes = new Button { Text = "Szenen und automatische Regeln…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        manageScenes.Click += (_, _) =>
+        {
+            using var dialog = new SceneManagerDialog(s, s.Scenes, s.SceneRules, s.RightModes, s.FocusLens,
+                s.SecondaryTimeZoneId, s.AppStacks.Groups.Where(group => group.Enabled).Select(group => group.Id.ToString("N")));
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            s.Scenes = dialog.Scenes;
+            s.SceneRules = dialog.Rules;
+            activeAutoSceneId = null;
+            beforeAutoScene = null;
+            if (dialog.ActivatedScene != null)
+                try { ApplyScene(dialog.ActivatedScene); }
+                catch (Exception ex) when (ex is InvalidDataException or UnauthorizedAccessException or IOException)
+                { MessageBox.Show($"Szene konnte nicht aktiviert werden:\n{ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning); }
+            s.Save();
+            nextSceneCheck = 0;
+        };
+        Add(manageScenes);
+        Add(new Label { Text = "Eine Szene speichert Look, sichtbare Apps, Uhr und rechten Bereich. Regeln können auf Monitorzahl oder Uhrzeit reagieren.", AutoSize = true, ForeColor = SystemColors.GrayText });
+
         Header("Aktionen");
         var buttons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
         var restart = new Button { Text = "Explorer neu starten", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
@@ -667,21 +946,28 @@ class MainForm : Form
             // Setting the controls runs their normal handlers, which write registry/settings.
             style.SelectedIndex = 0;
             autoContrast.Checked = false;
+            appAccent.Checked = false;
             autoHide.Checked = false;
             hide.Checked = false;
             clockLayout.SelectedIndex = 0;
             primaryClock.Checked = false;
+            secondaryZone.SelectedIndex = 0;
+            mediaToggle.Checked = false;
             pinned.Checked = false;
             favorites.SelectedIndex = 0;
+            focusLens.Checked = false;
             contextStyle.Checked = false;
             maximizedStyle.SelectedIndex = 2;
             s.CleanBackup = null;
             UpdateCleanUi();
-            trayOnDemand.Checked = false;
+            foreach (var control in rightModeControls) control.SelectedIndex = RightAreaModes.Always;
             s.Profiles = [null, null];
             ShowProfileStatus();
             s.HiddenPrograms = [];
-            programHider.Update(s.HiddenPrograms);
+            s.AppStacks = new AppStackConfig();
+            pinned.Enabled = true;
+            favorites.Enabled = s.HidePinnedUntilAlt;
+            programHider.Update(CurrentHiddenPrograms);
             s.Color = new Settings().Color; s.Save();
             alpha.Value = (s.Color >> 24) & 0xFF;
             ShowColor();
@@ -718,6 +1004,21 @@ class MainForm : Form
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Öffnen", null, (_, _) => OpenWindow());
+        menu.Items.Add("Ordnerstapel", null, (_, _) => OpenFolderStack());
+        presentationMenu = new ToolStripMenuItem("Bildschirmfreigabe-Modus", null, (_, _) => SetPresentationMode(!presentationMode));
+        menu.Items.Add(presentationMenu);
+        var stackMenu = new ToolStripMenuItem("App-Stapel starten");
+        menu.Items.Add(stackMenu);
+        menu.Opening += (_, _) =>
+        {
+            stackMenu.DropDownItems.Clear();
+            foreach (var group in s.AppStacks.Groups.Where(group => group.Enabled && group.LaunchPaths.Count > 0))
+            {
+                var chosen = group;
+                stackMenu.DropDownItems.Add(group.Name, null, (_, _) => LaunchStack(chosen));
+            }
+            stackMenu.Enabled = stackMenu.DropDownItems.Count > 0;
+        };
         menu.Items.Add("Beenden", null, (_, _) => ExitApp());
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "winBar", Visible = true, ContextMenuStrip = menu };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenWindow(); };
@@ -727,38 +1028,76 @@ class MainForm : Form
         {
             if (!updaterStarted) { updaterStarted = true; updater?.Start(); }
             long now = Environment.TickCount64;
+            if (now >= nextSceneCheck) EvaluateAutomaticScenes();
             altButton.Update(!s.HideTaskbar);
             bool altDown = AltSettingsButton.AltDown;
-            var bars = (pinnedRevealed || s.TrayOnDemand) ? Taskbar.VisibleBounds().ToArray() : [];
+            ulong stackRanges = s.AppStacks.PackRanges();
+            var bars = (pinnedRevealed || s.HidePinnedUntilAlt || stackRanges != 0 || RightAreaModes.HasPeek(s.RightModes!)) ? Taskbar.VisibleBounds().ToArray() : [];
             var pointer = Cursor.Position;
             if (altDown) pinnedRevealed = true;
             else if (pinnedRevealed && !bars.Any(r => r.Contains(pointer))) pinnedRevealed = false;
-            bool pinnedHidden = s.HidePinnedUntilAlt && !pinnedRevealed;
-            bool nearTray = s.TrayOnDemand && bars.Any(r => r.Contains(pointer) && pointer.X >= r.Right - Math.Min(260, r.Width / 3));
-            int effectiveTrayMask = s.TrayOnDemand && (altDown || nearTray) ? s.TrayHide & ~(4 | 8) : s.TrayHide;
+            bool pinnedHidden = stackRanges == 0 && s.HidePinnedUntilAlt && !pinnedRevealed;
+            bool nearRight = RightAreaModes.HasPeek(s.RightModes!) && bars.Any(r => NearRightArea(r, pointer));
+            if (altDown || nearRight || (rightRevealed && bars.Any(r => InRightFlyoutArea(r, pointer))))
+            {
+                rightRevealed = true;
+                rightRevealUntil = now + 1100;
+            }
+            else if (now >= rightRevealUntil) rightRevealed = false;
+            int effectiveTrayMask = presentationMode ? 31 : RightAreaModes.HiddenMask(s.RightModes!, rightRevealed);
+            programHider.SetFocusLens(s.FocusLens, altDown, Taskbar.ForegroundWindow);
+            if (stackRanges != 0 && now >= nextStackDensity)
+            {
+                nextStackDensity = now + 2000;
+                if (!s.AppStacks.AutoCompact) stackCollapseActive = true;
+                else
+                {
+                    int width = bars.Where(bar => bar.Width > bar.Height * 3).Select(bar => bar.Width).DefaultIfEmpty(0).Max();
+                    int pins = s.AppStacks.Groups.Where(group => group.Enabled).Select(group => group.Start + group.Count - 1).DefaultIfEmpty(0).Max();
+                    int estimated = pins * 44 + AppWindows.List().Count * 44 + 270;
+                    int percent = width > 0 ? estimated * 100 / width : 0;
+                    int threshold = Math.Clamp(s.AppStacks.CompactAtPercent, 45, 95);
+                    if (percent >= threshold) stackCollapseActive = true;
+                    else if (percent <= threshold - 8) stackCollapseActive = false;
+                }
+            }
+            int stackFlags = stackRanges == 0 ? 0 :
+                (altDown ? 1 : 0) | (bars.Any(bar => bar.Contains(pointer)) ? 2 : 0) | (stackCollapseActive ? 4 : 0);
             bool maximized = s.ContextStyle && Taskbar.ActiveWindowMaximized;
-            if (now >= nextVisualRefresh || pinnedHidden != lastPinnedHidden || maximized != lastMaximized || effectiveTrayMask != lastEffectiveTrayMask)
+            if (now >= nextVisualRefresh || pinnedHidden != lastPinnedHidden || maximized != lastMaximized ||
+                effectiveTrayMask != lastEffectiveTrayMask || stackRanges != appliedStackRanges || stackFlags != appliedStackFlags)
             {
                 nextVisualRefresh = now + 1000;
                 lastPinnedHidden = pinnedHidden;
                 lastMaximized = maximized;
                 lastEffectiveTrayMask = effectiveTrayMask;
+                appliedStackRanges = stackRanges;
+                appliedStackFlags = stackFlags;
                 int activeStyle = maximized ? s.MaximizedStyle : s.Style;
-                int activeColor = s.AutoContrast ? Taskbar.SystemTint(s.Color) : s.Color;
+                int? appTint = s.AppAccent ? AppAccent.ForegroundColor(Taskbar.ForegroundWindow) : null;
+                int activeColor = appTint.HasValue ? (s.Color & unchecked((int)0xFF000000)) | appTint.Value
+                    : s.AutoContrast ? Taskbar.SystemTint(s.Color) : s.Color;
                 if (activeStyle != 0 || lastAppliedStyle > 0)
                     Taskbar.SetAccent(AccentFor[activeStyle], activeStyle == 1 ? 0 : Taskbar.ToAbgr(activeColor));
                 lastAppliedStyle = activeStyle;
-                Taskbar.Tap(activeStyle > 0, effectiveTrayMask, pinnedHidden, s.KeepPinnedCount);
+                Taskbar.Tap(activeStyle > 0, effectiveTrayMask, pinnedHidden, s.KeepPinnedCount, stackRanges, stackFlags);
                 if (s.HideTaskbar) Taskbar.Show(false);
             }
             if (now >= nextClockRefresh)
             {
                 nextClockRefresh = now + 500;
-                clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly);
+                clock.Update(ActiveClockLayout, s.ClockOnPrimaryOnly, s.SecondaryTimeZoneId);
+                mediaRail.Update(s.ShowMediaRail && !presentationMode, s.HideTaskbar);
             }
             bool openHotkeyDown = AltSettingsButton.OpenHotkeyDown;
             if (openHotkeyDown && !openHotkeyWasDown) OpenWindow();
             openHotkeyWasDown = openHotkeyDown;
+            bool presentationHotkeyDown = AltSettingsButton.PresentationHotkeyDown;
+            if (presentationHotkeyDown && !presentationHotkeyWasDown) SetPresentationMode(!presentationMode);
+            presentationHotkeyWasDown = presentationHotkeyDown;
+            bool folderHotkeyDown = AltSettingsButton.FolderHotkeyDown;
+            if (folderHotkeyDown && !folderHotkeyWasDown) OpenFolderStack();
+            folderHotkeyWasDown = folderHotkeyDown;
             int profileHotkey = AltSettingsButton.ProfileHotkey;
             if (profileHotkey != 0 && profileHotkey != lastProfileHotkey) ApplyProfile(profileHotkey - 1);
             lastProfileHotkey = profileHotkey;
@@ -789,6 +1128,7 @@ class MainForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        if (message.Msg == 0x007E) nextSceneCheck = 0; // WM_DISPLAYCHANGE
         if (message.Msg is 0x0320 or 0x031A or 0x001A)
         {
             Taskbar.InvalidateSystemTint();
@@ -805,6 +1145,23 @@ class MainForm : Form
 
     void OpenWindow() { startHidden = false; Show(); WindowState = FormWindowState.Normal; Activate(); }
 
+    void OpenFolderStack()
+    {
+        var anchor = Taskbar.VisibleBounds().FirstOrDefault(bar => Screen.FromRectangle(bar).Primary);
+        if (anchor == Rectangle.Empty) anchor = new Rectangle(Cursor.Position, new Size(1, 1));
+        FolderStackPopup.ShowFolders(s.FolderStackPaths, anchor);
+    }
+
+    void SetPresentationMode(bool enabled)
+    {
+        if (presentationMode == enabled) return;
+        presentationMode = enabled;
+        if (presentationToggle != null && presentationToggle.Checked != enabled) presentationToggle.Checked = enabled;
+        if (presentationMenu != null) presentationMenu.Checked = enabled;
+        programHider.Update(CurrentHiddenPrograms);
+        nextVisualRefresh = nextClockRefresh = 0;
+    }
+
     void ExitApp()
     {
         exiting = true;
@@ -812,6 +1169,7 @@ class MainForm : Form
         timer.Stop();
         altButton.Close();
         clock.Dispose();
+        mediaRail.Dispose();
         programHider.Dispose();
         Taskbar.SetAccent(0, 0);
         Taskbar.Tap(false, 0, false, 0);
@@ -864,6 +1222,42 @@ class MainForm : Form
         }
         await Taskbar.RestartExplorer();
         MessageBox.Show($"Erledigt. Backup: {backup}\n\nWiederherstellen: Taskband.reg doppelklicken, .lnk-Dateien zurück nach\n{pinned}\nkopieren, Explorer neu starten.", Text);
+    }
+
+    static bool NearRightArea(Rectangle bar, Point pointer)
+    {
+        if (!bar.Contains(pointer)) return false;
+        return bar.Width > bar.Height * 3
+            ? pointer.X >= bar.Right - Math.Min(260, bar.Width / 3)
+            : pointer.Y >= bar.Bottom - Math.Min(260, bar.Height / 3);
+    }
+
+    async void LaunchStack(AppStackGroup group)
+    {
+        var result = await AppStackLauncher.LaunchAllAsync(group);
+        if (result.Failed.Count > 0)
+            MessageBox.Show($"{result.Failed.Count} Apps konnten nicht gestartet werden. Prüfe die Pfade im App-Stapel.", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    }
+
+    static bool InRightFlyoutArea(Rectangle bar, Point pointer)
+    {
+        var screen = Screen.FromRectangle(bar).Bounds;
+        Rectangle area;
+        if (bar.Width > bar.Height * 3)
+        {
+            int x = bar.Right - Math.Min(440, bar.Width);
+            area = bar.Top > screen.Top + screen.Height / 2
+                ? Rectangle.FromLTRB(x, Math.Max(screen.Top, bar.Top - 680), bar.Right, bar.Bottom)
+                : Rectangle.FromLTRB(x, bar.Top, bar.Right, Math.Min(screen.Bottom, bar.Bottom + 680));
+        }
+        else
+        {
+            int y = bar.Bottom - Math.Min(440, bar.Height);
+            area = bar.Left > screen.Left + screen.Width / 2
+                ? Rectangle.FromLTRB(Math.Max(screen.Left, bar.Left - 680), y, bar.Right, bar.Bottom)
+                : Rectangle.FromLTRB(bar.Left, y, Math.Min(screen.Right, bar.Right + 680), bar.Bottom);
+        }
+        return area.Contains(pointer);
     }
 
     // Without a caption the control spans both columns; with one, caption left and control stretched right.

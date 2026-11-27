@@ -2,10 +2,14 @@
 // Windows 11 draws the taskbar background in XAML on top of the window, which hides any accent set with
 // SetWindowCompositionAttribute. This DLL fades out that XAML background so the accent shows through.
 // It can also collapse parts of the system tray (clock, quick settings, ...).
-// Control: message-only window "TaskbarTweakerTap4".
+// Control: message-only window "TaskbarTweakerTap5".
 //   WM_APP:     wParam 1 = hide background, 0 = restore. Reply: number of background elements found.
 //   WM_APP + 1: wParam = bit mask of kParts to hide. Reply: number of tray elements found.
 //   WM_APP + 2: wParam bit 0 = hide pinned-only buttons, high bits = first N pinned buttons to keep.
+//   WM_APP + 3: wParam = four 10-bit stack spans (5-bit start, 5-bit count),
+//               lParam bit 0 = reveal all (Alt), bit 1 = pointer over any taskbar,
+//               bit 2 = collapse stacks (clear it to show all members when there is room).
+//               Positions refer to pinned buttons in their visual order; a stack's first icon is its anchor.
 // A reply of 0 means the XAML tree did not match.
 #include <windows.h>
 #undef GetCurrentTime // clashes with Storyboard::GetCurrentTime in C++/WinRT
@@ -19,6 +23,9 @@
 #include <winrt/Windows.UI.Xaml.h>
 #include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Media.h>
+#include <winrt/Windows.UI.Xaml.Input.h>
+#include <winrt/Windows.UI.h>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -59,10 +66,13 @@ struct PinnedItem
 {
     InstanceHandle handle; // IconPanel visual-tree handle
     weak_ref<FrameworkElement> button;
+    weak_ref<FrameworkElement> iconPanel;
+    weak_ref<winrt::Windows::UI::Xaml::Controls::Border> stackBadge;
     weak_ref<VisualStateGroup> runningStates;
     void* parentIdentity = nullptr; // UI-thread parent identity, used only for sibling ordering
     winrt::Windows::System::DispatcherQueue queue{ nullptr };
     bool hiddenByUs = false; // touched only on the button's UI thread
+    int stackIndex = -1; // UI thread: set by ApplyPinned for PointerEntered
 };
 
 static std::mutex g_lock;
@@ -72,6 +82,11 @@ static bool g_hidden = true;
 static int g_mask;
 static bool g_pinnedHidden;
 static int g_keepPinned;
+static uint64_t g_stackSpans;
+static bool g_stackRevealAll;
+static bool g_stackCollapseActive;
+static int g_hoveredStack = -1;
+static void* g_hoveredParent;
 static HWND g_wnd;
 
 static bool IsHidden(int bit) { return bit == 0 ? g_hidden : (g_mask & bit) != 0; } // caller holds g_lock
@@ -86,6 +101,23 @@ static void Apply(UIElement const& e, int bit, bool hidden)
 
 // The taskbar's RunningIndicatorStates group reports NoRunningIndicator for pinned apps with no
 // running window. Unknown states stay visible so a Windows update cannot hide running apps by default.
+static int StackForPosition(int position, uint64_t spans, int* anchor = nullptr, int* size = nullptr)
+{
+    for (int group = 0; group < 4; group++)
+    {
+        auto span = static_cast<int>((spans >> (group * 10)) & 0x3ff);
+        int start = span & 31;
+        int count = (span >> 5) & 31;
+        if (count >= 2 && position >= start && position < start + count)
+        {
+            if (anchor) *anchor = start;
+            if (size) *size = count;
+            return group;
+        }
+    }
+    return -1;
+}
+
 static void ApplyPinned(std::shared_ptr<PinnedItem> const& item)
 {
     auto button = item->button.get();
@@ -95,18 +127,30 @@ static void ApplyPinned(std::shared_ptr<PinnedItem> const& item)
     if (!state) return;
     bool enabled;
     int keep;
+    uint64_t spans;
+    bool revealAll;
+    bool collapseActive;
+    int hoveredStack;
+    void* hoveredParent;
     std::vector<std::shared_ptr<PinnedItem>> siblings;
     {
         std::lock_guard lock(g_lock);
         enabled = g_pinnedHidden;
         keep = g_keepPinned;
-        if (enabled && keep > 0)
+        spans = g_stackSpans;
+        revealAll = g_stackRevealAll;
+        collapseActive = g_stackCollapseActive;
+        hoveredStack = g_hoveredStack;
+        hoveredParent = g_hoveredParent;
+        if ((enabled && keep > 0) || spans)
             for (auto const& other : g_pinnedItems)
                 if (other->parentIdentity == item->parentIdentity) siblings.push_back(other);
     }
     bool pinnedOnly = state.Name() == L"NoRunningIndicator";
     int pinnedBefore = 0;
-    if (enabled && pinnedOnly && keep > 0)
+    int position = 0;
+    bool positionFound = false;
+    if (siblings.size())
     {
         if (auto parent = Media::VisualTreeHelper::GetParent(button))
         {
@@ -115,22 +159,69 @@ static void ApplyPinned(std::shared_ptr<PinnedItem> const& item)
             {
                 auto child = Media::VisualTreeHelper::GetChild(parent, i).try_as<FrameworkElement>();
                 if (!child) continue;
-                if (child == button) break;
+                if (child == button) { positionFound = true; break; }
                 for (auto const& other : siblings)
                 {
                     auto otherButton = other->button.get();
                     auto otherGroup = other->runningStates.get();
-                    if (otherButton == child && otherGroup && otherGroup.CurrentState() &&
-                        otherGroup.CurrentState().Name() == L"NoRunningIndicator")
+                    if (otherButton == child)
                     {
-                        pinnedBefore++;
+                        position++;
+                        if (otherGroup && otherGroup.CurrentState() &&
+                            otherGroup.CurrentState().Name() == L"NoRunningIndicator") pinnedBefore++;
                         break;
                     }
                 }
             }
         }
     }
-    bool shouldHide = enabled && pinnedOnly && pinnedBefore >= keep;
+    int anchor = -1;
+    int stackSize = 0;
+    int stack = collapseActive && positionFound ? StackForPosition(position, spans, &anchor, &stackSize) : -1;
+    item->stackIndex = stack;
+    bool stackExpanded = revealAll || (stack >= 0 && stack == hoveredStack && item->parentIdentity == hoveredParent);
+    bool stackAnchor = stack >= 0 && position == anchor;
+    // A stack anchor stays visible even when the on-demand pinned-app setting is enabled.
+    bool hideOnDemand = enabled && pinnedOnly && pinnedBefore >= keep && !stackAnchor && !stackExpanded;
+    bool hideInStack = stack >= 0 && !stackAnchor && pinnedOnly && !stackExpanded;
+    bool shouldHide = hideOnDemand || hideInStack;
+    // The badge is part of the native icon panel, so it needs no separate window or timer.
+    auto badge = item->stackBadge.get();
+    if (!badge && stackAnchor)
+    {
+        auto iconPanel = item->iconPanel.get();
+        if (iconPanel)
+        {
+            if (auto grid = iconPanel.try_as<winrt::Windows::UI::Xaml::Controls::Grid>())
+            {
+                using namespace winrt::Windows::UI::Xaml::Controls;
+                using namespace winrt::Windows::UI::Xaml::Media;
+                badge = Border{};
+                badge.Width(15);
+                badge.Height(15);
+                badge.CornerRadius(CornerRadius{ 8, 8, 8, 8 });
+                badge.Background(SolidColorBrush{ winrt::Windows::UI::Color{ 220, 38, 55, 79 } });
+                badge.BorderBrush(SolidColorBrush{ winrt::Windows::UI::Color{ 180, 196, 219, 249 } });
+                badge.BorderThickness(Thickness{ 1, 1, 1, 1 });
+                badge.HorizontalAlignment(HorizontalAlignment::Right);
+                badge.VerticalAlignment(VerticalAlignment::Top);
+                badge.IsHitTestVisible(false);
+                auto count = TextBlock{};
+                count.FontSize(9);
+                count.Foreground(SolidColorBrush{ winrt::Windows::UI::Color{ 255, 255, 255, 255 } });
+                count.HorizontalAlignment(HorizontalAlignment::Center);
+                count.VerticalAlignment(VerticalAlignment::Center);
+                badge.Child(count);
+                grid.Children().Append(badge);
+                item->stackBadge = make_weak(badge);
+            }
+        }
+    }
+    if (badge)
+    {
+        badge.Visibility(stackAnchor && !stackExpanded ? Visibility::Visible : Visibility::Collapsed);
+        if (stackAnchor) badge.Child().as<winrt::Windows::UI::Xaml::Controls::TextBlock>().Text(winrt::to_hstring(stackSize));
+    }
     if (shouldHide && !item->hiddenByUs && button.Visibility() == Visibility::Visible)
     {
         item->hiddenByUs = true;
@@ -145,14 +236,42 @@ static void ApplyPinned(std::shared_ptr<PinnedItem> const& item)
 
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
 {
-    if (msg == WM_APP + 2)
+    if (msg == WM_APP + 2 || msg == WM_APP + 3)
     {
         std::vector<std::shared_ptr<PinnedItem>> items;
         {
             std::lock_guard lock(g_lock);
-            g_pinnedHidden = (w & 1) != 0;
-            g_keepPinned = static_cast<int>(w >> 1);
-            if (g_keepPinned > 10) g_keepPinned = 10;
+            if (msg == WM_APP + 2)
+            {
+                g_pinnedHidden = (w & 1) != 0;
+                g_keepPinned = static_cast<int>(w >> 1);
+                if (g_keepPinned > 10) g_keepPinned = 10;
+            }
+            else
+            {
+                uint64_t requested = static_cast<uint64_t>(w);
+                uint64_t accepted = 0;
+                bool occupied[32]{};
+                for (int group = 0; group < 4; group++)
+                {
+                    auto span = static_cast<int>((requested >> (group * 10)) & 0x3ff);
+                    int start = span & 31;
+                    int count = (span >> 5) & 31;
+                    if (count < 2 || start + count > 32) continue;
+                    bool overlaps = false;
+                    for (int i = start; i < start + count; i++) if (occupied[i]) overlaps = true;
+                    if (overlaps) continue;
+                    for (int i = start; i < start + count; i++) occupied[i] = true;
+                    accepted |= static_cast<uint64_t>(span) << (group * 10);
+                }
+                bool collapseActive = (l & 4) != 0;
+                if (accepted != g_stackSpans || collapseActive != g_stackCollapseActive)
+                { g_hoveredStack = -1; g_hoveredParent = nullptr; }
+                g_stackSpans = accepted;
+                g_stackRevealAll = (l & 1) != 0;
+                g_stackCollapseActive = collapseActive;
+                if ((l & 2) == 0) { g_hoveredStack = -1; g_hoveredParent = nullptr; }
+            }
             items = g_pinnedItems;
         }
         for (auto const& item : items)
@@ -191,7 +310,7 @@ static void CreateControlWindow()
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
-    wc.lpszClassName = L"TaskbarTweakerTap4";
+    wc.lpszClassName = L"TaskbarTweakerTap5";
     RegisterClassW(&wc);
     g_wnd = CreateWindowExW(0, wc.lpszClassName, nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, inst, nullptr);
 }
@@ -237,6 +356,7 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
             auto item = std::make_shared<PinnedItem>();
             item->handle = el.Handle;
             item->button = make_weak(button);
+            item->iconPanel = make_weak(panel);
             item->runningStates = make_weak(group);
             item->parentIdentity = get_abi(Media::VisualTreeHelper::GetParent(button));
             item->queue = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
@@ -249,6 +369,21 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
             group.CurrentStateChanged([weak](IInspectable const&, VisualStateChangedEventArgs const&)
             {
                 if (auto current = weak.lock()) ApplyPinned(current);
+            });
+            button.PointerEntered([weak](IInspectable const&, Input::PointerRoutedEventArgs const&)
+            {
+                auto current = weak.lock();
+                if (!current || current->stackIndex < 0) return;
+                std::vector<std::shared_ptr<PinnedItem>> items;
+                {
+                    std::lock_guard lock(g_lock);
+                    if (g_hoveredStack == current->stackIndex && g_hoveredParent == current->parentIdentity) return;
+                    g_hoveredStack = current->stackIndex;
+                    g_hoveredParent = current->parentIdentity;
+                    items = g_pinnedItems;
+                }
+                for (auto const& other : items)
+                    other->queue.TryEnqueue([other] { ApplyPinned(other); });
             });
             ApplyPinned(item);
             return;
