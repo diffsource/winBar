@@ -105,7 +105,7 @@ static class WorkspaceController
                 var window = candidates.FirstOrDefault(w => w.Title == target.Title) ?? candidates.FirstOrDefault();
                 if (window == null) continue;
                 assignedHandles.Add(window.Handle);
-                Move(window.Handle, target);
+                if (!Move(window.Handle, target)) continue;
                 placed.Add(i);
             }
             if (placed.Count == placements.Length || attempt == 19) break;
@@ -114,17 +114,19 @@ static class WorkspaceController
         return (launched, placed.Count);
     }
 
-    static void Move(IntPtr hwnd, WorkspaceWindowPlacement saved)
+    static bool Move(IntPtr hwnd, WorkspaceWindowPlacement saved)
     {
         var screen = Screen.AllScreens.FirstOrDefault(s => string.Equals(s.DeviceName, saved.Monitor, StringComparison.OrdinalIgnoreCase))
             ?? Screen.PrimaryScreen;
-        if (screen == null) return;
+        if (screen == null) return false;
         var work = screen.WorkingArea;
         var bounds = TargetBounds(saved, work);
-        if (bounds == Rectangle.Empty) return;
+        if (bounds == Rectangle.Empty) return false;
         ShowWindow(hwnd, 9); // SW_RESTORE before moving a previously maximized window
-        SetWindowPos(hwnd, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x0004 | 0x0010 | 0x4000); // NOZORDER | NOACTIVATE | ASYNCWINDOWPOS
+        if (!SetWindowPos(hwnd, IntPtr.Zero, bounds.X, bounds.Y, bounds.Width, bounds.Height,
+                0x0004 | 0x0010 | 0x4000)) return false; // NOZORDER | NOACTIVATE | ASYNCWINDOWPOS
         if (saved.Maximized) ShowWindow(hwnd, 3);
+        return true;
     }
 
     internal static Rectangle TargetBounds(WorkspaceWindowPlacement saved, Rectangle work)
