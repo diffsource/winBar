@@ -8,6 +8,7 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (ReleaseUpdater.LaunchStagedUpdate(args)) return;
         Debug.Assert(Taskbar.ToAbgr(unchecked((int)0x80112233)) == unchecked((int)0x80332211));
         ApplicationConfiguration.Initialize();
         Application.SetColorMode(SystemColorMode.System); // follow Windows light/dark setting
@@ -210,6 +211,8 @@ class Settings
     public CleanBackup? CleanBackup { get; set; }
     public List<string> HiddenPrograms { get; set; } = [];
     public List<SavedProfile?> Profiles { get; set; } = [null, null];
+    public bool WelcomeSeen { get; set; }
+    public bool AutoUpdates { get; set; } = true;
 
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarTweaker");
     static string FilePath => Path.Combine(Dir, "settings.json");
@@ -298,9 +301,10 @@ class MainForm : Form
     readonly AltSettingsButton altButton;
     readonly DesignClock clock = new();
     readonly ProgramHider programHider = new();
+    ReleaseUpdater? updater;
     readonly NotifyIcon tray;
     readonly TableLayoutPanel grid = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(16, 4, 24, 16) };
-    bool startHidden, exiting, reverting, openHotkeyWasDown, pinnedRevealed, lastPinnedHidden, lastMaximized;
+    bool startHidden, exiting, reverting, openHotkeyWasDown, pinnedRevealed, lastPinnedHidden, lastMaximized, updaterStarted;
     long nextProgramScan, nextVisualRefresh, nextClockRefresh;
     int lastAppliedStyle = -1;
     int lastEffectiveTrayMask = -1;
@@ -684,8 +688,33 @@ class MainForm : Form
             foreach (var r in resets) r();
             await Taskbar.RestartExplorer();
         };
-        buttons.Controls.AddRange([restart, reset, unpin]);
+        var tour = new Button { Text = "Kurzanleitung anzeigen", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        tour.Click += (_, _) => { using var welcome = new WelcomeForm(); welcome.ShowDialog(this); };
+        buttons.Controls.AddRange([restart, reset, unpin, tour]);
         Add(buttons);
+
+        Header("Updates");
+        var autoUpdates = Check("Neue Releases automatisch im Hintergrund laden", s.AutoUpdates);
+        var updateStatus = new Label
+        {
+            Text = $"Version {typeof(Program).Assembly.GetName().Version?.ToString(3)} · Neue Versionen starten beim nächsten Öffnen.",
+            AutoSize = true, MaximumSize = new Size(LogicalToDeviceUnits(520), 0), ForeColor = SystemColors.GrayText
+        };
+        Add(updateStatus);
+        var checkUpdates = new Button { Text = "Jetzt nach Updates suchen", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        checkUpdates.Click += async (_, _) => { if (updater != null) await updater.CheckNowAsync(true); };
+        Add(checkUpdates);
+        updater = new ReleaseUpdater(message =>
+        {
+            if (!IsDisposed && IsHandleCreated) BeginInvoke(() => updateStatus.Text = message);
+        }, () => s.AutoUpdates);
+        autoUpdates.CheckedChanged += (_, _) =>
+        {
+            s.AutoUpdates = autoUpdates.Checked;
+            s.Save();
+            if (s.AutoUpdates && updater != null) _ = updater.CheckNowAsync(false);
+            else { ReleaseUpdater.DiscardReadyUpdate(); updateStatus.Text = "Automatische Updates ausgeschaltet."; }
+        };
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("Öffnen", null, (_, _) => OpenWindow());
@@ -696,6 +725,7 @@ class MainForm : Form
         // Poll only the Alt interaction frequently. The Explorer style and window list need less frequent work.
         timer.Tick += (_, _) =>
         {
+            if (!updaterStarted) { updaterStarted = true; updater?.Start(); }
             long now = Environment.TickCount64;
             altButton.Update(!s.HideTaskbar);
             bool altDown = AltSettingsButton.AltDown;
@@ -743,6 +773,20 @@ class MainForm : Form
 
     protected override void SetVisibleCore(bool value) => base.SetVisibleCore(!startHidden && value);
 
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        if (!s.WelcomeSeen)
+            BeginInvoke(() =>
+            {
+                if (s.WelcomeSeen || IsDisposed) return;
+                using var welcome = new WelcomeForm();
+                welcome.ShowDialog(this);
+                s.WelcomeSeen = true;
+                s.Save();
+            });
+    }
+
     protected override void WndProc(ref Message message)
     {
         if (message.Msg is 0x0320 or 0x031A or 0x001A)
@@ -764,6 +808,7 @@ class MainForm : Form
     void ExitApp()
     {
         exiting = true;
+        updater?.Stop();
         timer.Stop();
         altButton.Close();
         clock.Dispose();
