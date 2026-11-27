@@ -16,6 +16,7 @@ sealed class AltSettingsButton : Form
     [StructLayout(LayoutKind.Sequential)] struct NativePoint { public int X, Y; }
 
     public static bool OpenHotkeyDown => GetAsyncKeyState(VkControl) < 0 && GetAsyncKeyState(VkAlt) < 0 && GetAsyncKeyState(VkS) < 0;
+    public static bool AltDown => GetAsyncKeyState(VkAlt) < 0;
 
     public AltSettingsButton(Action openSettings)
     {
@@ -86,15 +87,18 @@ sealed class DesignClock : IDisposable
 {
     readonly List<ClockPill> pills = [];
 
-    public void Update(bool enabled)
+    public void Update(int layout, bool primaryOnly)
     {
-        var bars = enabled ? Taskbar.VisibleBounds().Where(r => r.Width > r.Height * 3 && r.Height >= 32 && !Taskbar.CoveredByFullscreenWindow(r)).ToArray() : [];
+        var bars = layout != 0
+            ? Taskbar.VisibleBounds().Where(r => r.Width > r.Height * 3 && r.Height >= 32 && !Taskbar.CoveredByFullscreenWindow(r) && (!primaryOnly || Screen.FromRectangle(r).Primary)).ToArray()
+            : [];
         while (pills.Count > bars.Length) { pills[^1].Close(); pills.RemoveAt(pills.Count - 1); }
         for (int i = 0; i < bars.Length; i++)
         {
             if (i == pills.Count) pills.Add(new ClockPill());
             var pill = pills[i];
             var bar = bars[i];
+            pill.SetLayout(layout);
             pill.Location = new Point(bar.Right - pill.Width - 9, bar.Top + (bar.Height - pill.Height) / 2);
             pill.RefreshTime();
             if (!pill.Visible) pill.Show();
@@ -107,6 +111,7 @@ sealed class DesignClock : IDisposable
     {
         static readonly CultureInfo German = CultureInfo.GetCultureInfo("de-DE");
         string? lastMinute;
+        int layout = 2;
 
         public ClockPill()
         {
@@ -121,6 +126,20 @@ sealed class DesignClock : IDisposable
             using var outline = new GraphicsPath();
             outline.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(12, 12));
             Region = new Region(outline);
+        }
+
+        public void SetLayout(int value)
+        {
+            if (layout == value) return;
+            layout = value;
+            Size = layout == 1 ? new Size(82, 36) : new Size(108, 40);
+            using var outline = new GraphicsPath();
+            outline.AddRoundedRectangle(new Rectangle(0, 0, Width, Height), new Size(12, 12));
+            var old = Region;
+            Region = new Region(outline);
+            old?.Dispose();
+            lastMinute = null;
+            Invalidate();
         }
 
         protected override bool ShowWithoutActivation => true;
@@ -149,10 +168,12 @@ sealed class DesignClock : IDisposable
             using var timeFont = new Font("Segoe UI Semibold", 13, FontStyle.Bold);
             using var dateFont = new Font("Segoe UI", 7.5f);
             var now = DateTime.Now;
-            TextRenderer.DrawText(e.Graphics, now.ToString("HH:mm", German), timeFont, new Rectangle(4, 2, Width - 8, 23),
+            TextRenderer.DrawText(e.Graphics, now.ToString("HH:mm", German), timeFont,
+                layout == 1 ? new Rectangle(4, 7, Width - 8, 23) : new Rectangle(4, 2, Width - 8, 23),
                 Color.White, TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(e.Graphics, now.ToString("ddd, dd.MM.", German), dateFont, new Rectangle(4, 24, Width - 8, 13),
-                Color.FromArgb(165, 198, 245), TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+            if (layout == 2)
+                TextRenderer.DrawText(e.Graphics, now.ToString("ddd, dd.MM.", German), dateFont, new Rectangle(4, 24, Width - 8, 13),
+                    Color.FromArgb(165, 198, 245), TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
         }
     }
 }

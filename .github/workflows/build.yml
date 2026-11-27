@@ -1,0 +1,23 @@
+name: Build
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish winBar
+        run: dotnet publish -c Release -o publish -p:PublishSingleFile=true --self-contained false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winBar-win-x64
+          path: |
+            publish/TaskbarTweaker.exe
+            publish/TaskbarTap.dll

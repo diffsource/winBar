@@ -29,6 +29,7 @@ static class Taskbar
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out NativeRect rect);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, string l, uint flags, uint timeout, out IntPtr res);
     [DllImport("shell32.dll")] static extern IntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -67,21 +68,27 @@ static class Taskbar
     static int injecting;
     static uint injectedPid;
     static long nextInject;
+    static IntPtr lastTapWindow;
+    static bool? lastBackground, lastPinned;
+    static int lastTrayMask = -1;
 
     // Class name carries a version: an older TaskbarTap.dll still loaded in explorer does not know newer messages.
-    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap2", null); // HWND_MESSAGE
+    static IntPtr TapWindow() => FindWindowEx(new IntPtr(-3), IntPtr.Zero, "TaskbarTweakerTap3", null); // HWND_MESSAGE
 
-    // hideBackground: fade the XAML background. trayMask: tray parts to collapse (bits as in TaskbarTap.cpp kParts).
-    public static void Tap(bool hideBackground, int trayMask)
+    // hideBackground: fade XAML background; trayMask: tray parts; hidePinned: show pinned-only buttons on demand.
+    public static void Tap(bool hideBackground, int trayMask, bool hidePinned)
     {
         var w = TapWindow();
         if (w != IntPtr.Zero)
         {
-            PostMessage(w, 0x8000, hideBackground ? 1 : 0, IntPtr.Zero); // WM_APP
-            PostMessage(w, 0x8001, trayMask, IntPtr.Zero);                // WM_APP + 1
+            if (w != lastTapWindow) { lastTapWindow = w; lastBackground = lastPinned = null; lastTrayMask = -1; }
+            if (lastBackground != hideBackground) { PostMessage(w, 0x8000, hideBackground ? 1 : 0, IntPtr.Zero); lastBackground = hideBackground; }
+            if (lastTrayMask != trayMask) { PostMessage(w, 0x8001, trayMask, IntPtr.Zero); lastTrayMask = trayMask; }
+            if (lastPinned != hidePinned) { PostMessage(w, 0x8002, hidePinned ? 1 : 0, IntPtr.Zero); lastPinned = hidePinned; }
             return;
         }
-        if ((!hideBackground && trayMask == 0) || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
+        lastTapWindow = IntPtr.Zero;
+        if ((!hideBackground && trayMask == 0 && !hidePinned) || Environment.OSVersion.Version.Build < 22000 || !File.Exists(TapDll)) return;
         if (Environment.TickCount64 < nextInject || Interlocked.Exchange(ref injecting, 1) == 1) return;
         nextInject = Environment.TickCount64 + 5000; // explorer may still be starting; retry later
         GetWindowThreadProcessId(FindWindow("Shell_TrayWnd", null), out var pid);
@@ -122,6 +129,8 @@ static class Taskbar
         return r.Left <= screen.Left + 2 && r.Top <= screen.Top + 2 && r.Right >= screen.Right - 2 && r.Bottom >= screen.Bottom - 2;
     }
 
+    public static bool ActiveWindowMaximized => IsZoomed(GetForegroundWindow());
+
     [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
 
     static APPBARDATA Abd() => new() { cbSize = Marshal.SizeOf<APPBARDATA>(), hWnd = FindWindow("Shell_TrayWnd", null) };
@@ -153,13 +162,36 @@ class Settings
     public int Color { get; set; } = 0x40000000;
     public bool HideTaskbar { get; set; }
     public int TrayHide { get; set; } // bit mask, see TaskbarTap.cpp kParts
-    public bool ShowDesignClock { get; set; }
+    public bool ShowDesignClock { get; set; } // compatibility with settings saved before ClockLayout existed
+    public int ClockLayout { get; set; } // 0 off, 1 time, 2 time and date
+    public bool ClockOnPrimaryOnly { get; set; }
+    public bool HidePinnedUntilAlt { get; set; }
+    public bool ContextStyle { get; set; }
+    public int MaximizedStyle { get; set; } = 2;
+    public CleanBackup? CleanBackup { get; set; }
     public List<string> HiddenPrograms { get; set; } = [];
 
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarTweaker");
     static string FilePath => Path.Combine(Dir, "settings.json");
-    public static Settings Load() { try { return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new(); } catch { return new(); } }
+    public static Settings Load()
+    {
+        try
+        {
+            var s = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
+            if (s.ShowDesignClock && s.ClockLayout == 0) s.ClockLayout = 2;
+            s.ClockLayout = Math.Clamp(s.ClockLayout, 0, 2);
+            s.MaximizedStyle = Math.Clamp(s.MaximizedStyle, 0, 4);
+            return s;
+        }
+        catch { return new(); }
+    }
     public void Save() { Directory.CreateDirectory(Dir); File.WriteAllText(FilePath, JsonSerializer.Serialize(this)); }
+}
+
+class CleanBackup
+{
+    public Dictionary<string, int> Values { get; set; } = [];
+    public int TrayHide { get; set; }
 }
 
 class MainForm : Form
@@ -186,6 +218,16 @@ class MainForm : Form
         new("\"Task beenden\" im Rechtsklickmenü", Adv + @"\TaskbarDeveloperSettings", "TaskbarEndTask", 0),
     ];
     static readonly int[] AccentFor = [0, 2, 2, 3, 4];
+    static readonly Dictionary<string, int> CleanValues = new()
+    {
+        ["SearchboxTaskbarMode"] = 0,
+        ["ShowTaskViewButton"] = 0,
+        ["TaskbarDa"] = 0,
+        ["ShowCopilotButton"] = 0,
+        ["TaskbarMn"] = 0,
+        ["TaskbarBadges"] = 0,
+        ["TaskbarFlashing"] = 0,
+    };
 
     readonly Settings s = Settings.Load();
     readonly System.Windows.Forms.Timer timer = new() { Interval = 100 };
@@ -194,8 +236,9 @@ class MainForm : Form
     readonly ProgramHider programHider = new();
     readonly NotifyIcon tray;
     readonly TableLayoutPanel grid = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(16, 4, 24, 16) };
-    bool startHidden, exiting, reverting, openHotkeyWasDown;
-    long nextProgramScan;
+    bool startHidden, exiting, reverting, openHotkeyWasDown, pinnedRevealed, lastPinnedHidden, lastMaximized;
+    long nextProgramScan, nextVisualRefresh, nextClockRefresh;
+    int lastAppliedStyle = -1;
 
     public MainForm(bool startHidden)
     {
@@ -217,15 +260,15 @@ class MainForm : Form
         colorBtn.Click += (_, _) =>
         {
             using var dlg = new ColorDialog { Color = Color.FromArgb(s.Color | unchecked((int)0xFF000000)), FullOpen = true };
-            if (dlg.ShowDialog() == DialogResult.OK) { s.Color = (s.Color & unchecked((int)0xFF000000)) | (dlg.Color.ToArgb() & 0xFFFFFF); s.Save(); ShowColor(); }
+            if (dlg.ShowDialog() == DialogResult.OK) { s.Color = (s.Color & unchecked((int)0xFF000000)) | (dlg.Color.ToArgb() & 0xFFFFFF); s.Save(); ShowColor(); nextVisualRefresh = 0; }
         };
         var colorLbl = Caption("Farbe");
         Add(colorBtn, colorLbl);
         var alphaLbl = Caption("");
         var alpha = new TrackBar { Minimum = 0, Maximum = 255, TickFrequency = 32, Value = (s.Color >> 24) & 0xFF };
-        alpha.ValueChanged += (_, _) => { s.Color = (alpha.Value << 24) | (s.Color & 0xFFFFFF); s.Save(); ShowAlpha(); };
+        alpha.ValueChanged += (_, _) => { s.Color = (alpha.Value << 24) | (s.Color & 0xFFFFFF); s.Save(); ShowAlpha(); nextVisualRefresh = 0; };
         Add(alpha, alphaLbl);
-        style.SelectedIndexChanged += (_, _) => { s.Style = style.SelectedIndex; if (s.Style == 0) Taskbar.SetAccent(0, 0); s.Save(); ShowStyle(); };
+        style.SelectedIndexChanged += (_, _) => { s.Style = style.SelectedIndex; s.Save(); ShowStyle(); nextVisualRefresh = 0; };
         ShowColor(); ShowAlpha(); ShowStyle();
 
         void ShowColor()
@@ -239,6 +282,34 @@ class MainForm : Form
         // Only Farbe/Blur/Acrylic use the color; "transparent" always sends 0.
         void ShowStyle() => colorBtn.Enabled = colorLbl.Enabled = alpha.Enabled = alphaLbl.Enabled = s.Style >= 2;
 
+        var looks = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty };
+        foreach (var (label, lookStyle, lookColor) in new (string, int, int)[]
+        {
+            ("Clear", 1, 0),
+            ("Frost", 3, unchecked((int)0xA01B2940)),
+            ("Solid", 2, unchecked((int)0xE0222936)),
+        })
+        {
+            var button = new Button { Text = label, AutoSize = true, Padding = new Padding(10, 4, 10, 4) };
+            button.Click += (_, _) =>
+            {
+                s.Color = lookColor;
+                alpha.Value = (s.Color >> 24) & 0xFF;
+                style.SelectedIndex = lookStyle;
+                s.Style = lookStyle;
+                s.Save();
+                ShowColor(); ShowAlpha(); ShowStyle();
+                nextVisualRefresh = 0;
+            };
+            looks.Controls.Add(button);
+        }
+        Add(looks, Caption("Schnell-Looks"));
+        var contextStyle = Check("Bei maximierten Fenstern anderen Stil verwenden", s.ContextStyle);
+        var maximizedStyle = Combo("Stil bei maximiertem Fenster", ["Standard", "Transparent", "Farbe (getönt)", "Blur", "Acrylic"], s.MaximizedStyle);
+        maximizedStyle.Enabled = s.ContextStyle;
+        contextStyle.CheckedChanged += (_, _) => { s.ContextStyle = contextStyle.Checked; maximizedStyle.Enabled = s.ContextStyle; s.Save(); nextVisualRefresh = 0; };
+        maximizedStyle.SelectedIndexChanged += (_, _) => { s.MaximizedStyle = maximizedStyle.SelectedIndex; s.Save(); nextVisualRefresh = 0; };
+
         Header("Verhalten");
         var autoHide = Check("Automatisch ausblenden", Taskbar.AutoHide);
         autoHide.CheckedChanged += (_, _) => Taskbar.AutoHide = autoHide.Checked;
@@ -246,11 +317,28 @@ class MainForm : Form
         hide.CheckedChanged += (_, _) => { s.HideTaskbar = hide.Checked; if (!hide.Checked) Taskbar.Show(true); s.Save(); };
         var auto = Check("Mit Windows starten (im Tray)", Autostart);
         auto.CheckedChanged += (_, _) => Autostart = auto.Checked;
+        var cleanControls = new List<Control>();
+        var refreshControls = new List<Action>();
+        var cleanButton = new Button { AutoSize = true, Padding = new Padding(10, 5, 10, 5) };
+        cleanButton.Click += (_, _) => ToggleClean();
+        Add(cleanButton, Caption("Clean-Profil"));
+        Add(new Label { Text = "Blendet Suche, Widgets, Aufgabenansicht, Badges und Tray-Symbole gemeinsam aus. Ein zweiter Klick stellt deine vorherigen Werte wieder her.", AutoSize = true, ForeColor = SystemColors.GrayText });
 
         Header("Uhr und Programme");
-        var designClock = Check("Design-Uhr rechts auf der Taskleiste anzeigen", s.ShowDesignClock);
-        designClock.CheckedChanged += (_, _) => { s.ShowDesignClock = designClock.Checked; s.Save(); clock.Update(s.ShowDesignClock); };
+        var clockLayout = Combo("Design-Uhr", ["Aus", "Nur Uhrzeit", "Uhrzeit und Datum"], s.ClockLayout);
+        clockLayout.SelectedIndexChanged += (_, _) =>
+        {
+            s.ClockLayout = clockLayout.SelectedIndex;
+            s.ShowDesignClock = s.ClockLayout != 0;
+            s.Save();
+            clock.Update(s.ClockLayout, s.ClockOnPrimaryOnly);
+        };
+        var primaryClock = Check("Design-Uhr nur auf dem Hauptmonitor", s.ClockOnPrimaryOnly);
+        primaryClock.CheckedChanged += (_, _) => { s.ClockOnPrimaryOnly = primaryClock.Checked; s.Save(); clock.Update(s.ClockLayout, s.ClockOnPrimaryOnly); };
         Add(new Label { Text = "Die Uhr liegt über der Windows-Uhr. Klicks gehen weiterhin an Windows.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        var pinned = Check("Angeheftete Apps erst mit Alt zeigen (experimentell)", s.HidePinnedUntilAlt);
+        pinned.CheckedChanged += (_, _) => { s.HidePinnedUntilAlt = pinned.Checked; s.Save(); nextVisualRefresh = 0; };
+        Add(new Label { Text = "Laufende Apps sollen sichtbar bleiben. Nach dem Loslassen von Alt bleiben die angehefteten Apps sichtbar, bis die Maus die Taskleiste verlässt.", AutoSize = true, ForeColor = SystemColors.GrayText });
         var choosePrograms = new Button { Text = "Programme auf der Taskleiste ausblenden…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
         choosePrograms.Click += (_, _) =>
         {
@@ -273,12 +361,16 @@ class MainForm : Form
                 var c = Combo(t.Label, opts, t.Get());
                 c.SelectedIndexChanged += (_, _) => Apply(t, c.SelectedIndex, () => c.SelectedIndex = Math.Clamp(t.Get(), 0, opts.Length - 1));
                 resets.Add(() => c.SelectedIndex = Math.Clamp(t.Default, 0, opts.Length - 1));
+                refreshControls.Add(() => c.SelectedIndex = Math.Clamp(t.Get(), 0, opts.Length - 1));
+                if (CleanValues.ContainsKey(t.Name)) cleanControls.Add(c);
             }
             else
             {
                 var c = Check(t.Label, t.Get() != 0);
                 c.CheckedChanged += (_, _) => Apply(t, c.Checked ? 1 : 0, () => c.Checked = t.Get() != 0);
                 resets.Add(() => c.Checked = t.Default != 0);
+                refreshControls.Add(() => c.Checked = t.Get() != 0);
+                if (CleanValues.ContainsKey(t.Name)) cleanControls.Add(c);
             }
         }
         Add(new Label { Text = "Manche Änderungen greifen erst nach Explorer-Neustart.", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(3, 8, 3, 0) });
@@ -295,8 +387,56 @@ class MainForm : Form
         foreach (var (label, bit) in trayParts)
         {
             var c = Check(label, (s.TrayHide & bit) != 0);
-            c.CheckedChanged += (_, _) => { s.TrayHide = c.Checked ? s.TrayHide | bit : s.TrayHide & ~bit; s.Save(); };
+            c.CheckedChanged += (_, _) => { if (reverting) return; s.TrayHide = c.Checked ? s.TrayHide | bit : s.TrayHide & ~bit; s.Save(); nextVisualRefresh = 0; };
             resets.Add(() => c.Checked = false);
+            refreshControls.Add(() => c.Checked = (s.TrayHide & bit) != 0);
+            if (bit is 4 or 8) cleanControls.Add(c);
+        }
+        UpdateCleanUi();
+        void UpdateCleanUi()
+        {
+            bool active = s.CleanBackup != null;
+            cleanButton.Text = active ? "Vorherige Ansicht wiederherstellen" : "Clean-Profil aktivieren";
+            foreach (var control in cleanControls) control.Enabled = !active;
+        }
+        void ToggleClean()
+        {
+            var targets = Tweaks.Where(t => CleanValues.ContainsKey(t.Name)).ToArray();
+            try
+            {
+                if (s.CleanBackup == null)
+                {
+                    var backup = new CleanBackup { TrayHide = s.TrayHide };
+                    foreach (var t in targets) backup.Values[t.Name] = t.Get();
+                    try { foreach (var t in targets) t.Set(CleanValues[t.Name]); }
+                    catch
+                    {
+                        foreach (var t in targets) try { t.Set(backup.Values[t.Name]); } catch { }
+                        throw;
+                    }
+                    s.TrayHide |= 4 | 8;
+                    s.CleanBackup = backup;
+                }
+                else
+                {
+                    foreach (var t in targets)
+                        if (s.CleanBackup.Values.TryGetValue(t.Name, out int value)) t.Set(value);
+                    s.TrayHide = s.CleanBackup.TrayHide;
+                    s.CleanBackup = null;
+                }
+                Taskbar.Notify();
+                s.Save();
+                reverting = true;
+                foreach (var refresh in refreshControls) refresh();
+                reverting = false;
+                UpdateCleanUi();
+                nextVisualRefresh = 0;
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                reverting = false;
+                MessageBox.Show($"Clean-Profil konnte nicht angewendet werden:\n{ex.Message}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
         Add(new Label { Text = "Greift direkt in die Windows-Oberfläche ein und kann nach Windows-Updates nicht mehr funktionieren. Nach einem App-Update einmal Explorer neu starten.", AutoSize = true, MaximumSize = new Size(LogicalToDeviceUnits(520), 0), ForeColor = SystemColors.GrayText, Margin = new Padding(3, 8, 3, 0) });
 
@@ -314,7 +454,13 @@ class MainForm : Form
             style.SelectedIndex = 0;
             autoHide.Checked = false;
             hide.Checked = false;
-            designClock.Checked = false;
+            clockLayout.SelectedIndex = 0;
+            primaryClock.Checked = false;
+            pinned.Checked = false;
+            contextStyle.Checked = false;
+            maximizedStyle.SelectedIndex = 2;
+            s.CleanBackup = null;
+            UpdateCleanUi();
             s.HiddenPrograms = [];
             programHider.Update(s.HiddenPrograms);
             s.Color = new Settings().Color; s.Save();
@@ -332,20 +478,38 @@ class MainForm : Form
         tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "winBar", Visible = true, ContextMenuStrip = menu };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenWindow(); };
 
-        // Explorer resets the style on many events, so re-apply continuously.
+        // Poll only the Alt interaction frequently. The Explorer style and window list need less frequent work.
         timer.Tick += (_, _) =>
         {
-            if (s.Style > 0) Taskbar.SetAccent(AccentFor[s.Style], s.Style == 1 ? 0 : Taskbar.ToAbgr(s.Color));
-            Taskbar.Tap(s.Style > 0, s.TrayHide);
-            if (s.HideTaskbar) Taskbar.Show(false);
+            long now = Environment.TickCount64;
             altButton.Update(!s.HideTaskbar);
-            clock.Update(s.ShowDesignClock && !s.HideTaskbar);
+            if (AltSettingsButton.AltDown) pinnedRevealed = true;
+            else if (pinnedRevealed && !Taskbar.VisibleBounds().Any(r => r.Contains(Cursor.Position))) pinnedRevealed = false;
+            bool pinnedHidden = s.HidePinnedUntilAlt && !pinnedRevealed;
+            bool maximized = s.ContextStyle && Taskbar.ActiveWindowMaximized;
+            if (now >= nextVisualRefresh || pinnedHidden != lastPinnedHidden || maximized != lastMaximized)
+            {
+                nextVisualRefresh = now + 1000;
+                lastPinnedHidden = pinnedHidden;
+                lastMaximized = maximized;
+                int activeStyle = maximized ? s.MaximizedStyle : s.Style;
+                if (activeStyle != 0 || lastAppliedStyle > 0)
+                    Taskbar.SetAccent(AccentFor[activeStyle], activeStyle == 1 ? 0 : Taskbar.ToAbgr(s.Color));
+                lastAppliedStyle = activeStyle;
+                Taskbar.Tap(activeStyle > 0, s.TrayHide, pinnedHidden);
+                if (s.HideTaskbar) Taskbar.Show(false);
+            }
+            if (now >= nextClockRefresh)
+            {
+                nextClockRefresh = now + 500;
+                clock.Update(s.HideTaskbar ? 0 : s.ClockLayout, s.ClockOnPrimaryOnly);
+            }
             bool openHotkeyDown = AltSettingsButton.OpenHotkeyDown;
             if (openHotkeyDown && !openHotkeyWasDown) OpenWindow();
             openHotkeyWasDown = openHotkeyDown;
-            if (Environment.TickCount64 >= nextProgramScan)
+            if (now >= nextProgramScan)
             {
-                nextProgramScan = Environment.TickCount64 + 1000;
+                nextProgramScan = now + 2000;
                 programHider.Refresh();
             }
         };
@@ -370,7 +534,7 @@ class MainForm : Form
         clock.Dispose();
         programHider.Dispose();
         Taskbar.SetAccent(0, 0);
-        Taskbar.Tap(false, 0);
+        Taskbar.Tap(false, 0, false);
         Taskbar.Show(true);
         tray.Visible = false;
         Application.Exit();

@@ -2,9 +2,10 @@
 // Windows 11 draws the taskbar background in XAML on top of the window, which hides any accent set with
 // SetWindowCompositionAttribute. This DLL fades out that XAML background so the accent shows through.
 // It can also collapse parts of the system tray (clock, quick settings, ...).
-// Control: message-only window "TaskbarTweakerTap2".
+// Control: message-only window "TaskbarTweakerTap3".
 //   WM_APP:     wParam 1 = hide background, 0 = restore. Reply: number of background elements found.
 //   WM_APP + 1: wParam = bit mask of kParts to hide. Reply: number of tray elements found.
+//   WM_APP + 2: wParam 1 = hide pinned-only app buttons, 0 = restore.
 // A reply of 0 means the XAML tree did not match.
 #include <windows.h>
 #undef GetCurrentTime // clashes with Storyboard::GetCurrentTime in C++/WinRT
@@ -15,7 +16,9 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.UI.Xaml.h>
+#include <winrt/Windows.UI.Xaml.Controls.h>
 #include <winrt/Windows.UI.Xaml.Media.h>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -51,10 +54,21 @@ struct Item
     int bit; // 0 = taskbar background, else kParts bit
 };
 
+struct PinnedItem
+{
+    InstanceHandle handle; // IconPanel visual-tree handle
+    weak_ref<FrameworkElement> button;
+    weak_ref<VisualStateGroup> runningStates;
+    winrt::Windows::System::DispatcherQueue queue{ nullptr };
+    bool hiddenByUs = false; // touched only on the button's UI thread
+};
+
 static std::mutex g_lock;
 static std::vector<Item> g_items;
+static std::vector<std::shared_ptr<PinnedItem>> g_pinnedItems;
 static bool g_hidden = true;
 static int g_mask;
+static bool g_pinnedHidden;
 static HWND g_wnd;
 
 static bool IsHidden(int bit) { return bit == 0 ? g_hidden : (g_mask & bit) != 0; } // caller holds g_lock
@@ -67,8 +81,45 @@ static void Apply(UIElement const& e, int bit, bool hidden)
     else e.Visibility(hidden ? Visibility::Collapsed : Visibility::Visible);
 }
 
+// The taskbar's RunningIndicatorStates group reports NoRunningIndicator for pinned apps with no
+// running window. Unknown states stay visible so a Windows update cannot hide running apps by default.
+static void ApplyPinned(std::shared_ptr<PinnedItem> const& item)
+{
+    auto button = item->button.get();
+    auto group = item->runningStates.get();
+    if (!button || !group) return;
+    auto state = group.CurrentState();
+    if (!state) return;
+    bool enabled;
+    { std::lock_guard lock(g_lock); enabled = g_pinnedHidden; }
+    bool shouldHide = enabled && state.Name() == L"NoRunningIndicator";
+    if (shouldHide && !item->hiddenByUs && button.Visibility() == Visibility::Visible)
+    {
+        item->hiddenByUs = true;
+        button.Visibility(Visibility::Collapsed);
+    }
+    else if (!shouldHide && item->hiddenByUs)
+    {
+        item->hiddenByUs = false;
+        button.Visibility(Visibility::Visible);
+    }
+}
+
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
 {
+    if (msg == WM_APP + 2)
+    {
+        std::vector<std::shared_ptr<PinnedItem>> items;
+        {
+            std::lock_guard lock(g_lock);
+            if (g_pinnedHidden == (w != 0)) return g_pinnedItems.size();
+            g_pinnedHidden = w != 0;
+            items = g_pinnedItems;
+        }
+        for (auto const& item : items)
+            item->queue.TryEnqueue([item] { ApplyPinned(item); });
+        return items.size();
+    }
     if (msg != WM_APP && msg != WM_APP + 1) return DefWindowProcW(h, msg, w, l);
     std::lock_guard lock(g_lock);
     int changed = 0; // bit 0 of "changed" stands for the background here, tray bits shifted up by one
@@ -101,7 +152,7 @@ static void CreateControlWindow()
     WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
-    wc.lpszClassName = L"TaskbarTweakerTap2";
+    wc.lpszClassName = L"TaskbarTweakerTap3";
     RegisterClassW(&wc);
     g_wnd = CreateWindowExW(0, wc.lpszClassName, nullptr, 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, inst, nullptr);
 }
@@ -121,6 +172,48 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
 {
     com_ptr<IUnknown> site;
     com_ptr<IXamlDiagnostics> diag;
+
+    void TrackPinned(VisualElement const& el)
+    {
+        com_ptr<::IInspectable> obj;
+        if (FAILED(diag->GetIInspectableFromHandle(el.Handle, obj.put()))) return;
+        FrameworkElement panel{ nullptr };
+        if (FAILED(obj->QueryInterface(guid_of<FrameworkElement>(), put_abi(panel)))) return;
+        FrameworkElement button{ nullptr };
+        DependencyObject ancestor = panel;
+        for (int i = 0; i < 6 && ancestor; i++)
+        {
+            ancestor = Media::VisualTreeHelper::GetParent(ancestor);
+            if (ancestor && (get_class_name(ancestor) == L"Taskbar.TaskListButton" ||
+                             get_class_name(ancestor) == L"Taskbar.TaskListLabeledButton"))
+            {
+                button = ancestor.try_as<FrameworkElement>();
+                break;
+            }
+        }
+        if (!button) return;
+        for (auto const& group : VisualStateManager::GetVisualStateGroups(panel))
+        {
+            if (group.Name() != L"RunningIndicatorStates") continue;
+            auto item = std::make_shared<PinnedItem>();
+            item->handle = el.Handle;
+            item->button = make_weak(button);
+            item->runningStates = make_weak(group);
+            item->queue = winrt::Windows::System::DispatcherQueue::GetForCurrentThread();
+            {
+                std::lock_guard lock(g_lock);
+                for (auto const& existing : g_pinnedItems) if (existing->handle == item->handle) return;
+                g_pinnedItems.push_back(item);
+            }
+            std::weak_ptr<PinnedItem> weak = item;
+            group.CurrentStateChanged([weak](IInspectable const&, VisualStateChangedEventArgs const&)
+            {
+                if (auto current = weak.lock()) ApplyPinned(current);
+            });
+            ApplyPinned(item);
+            return;
+        }
+    }
 
     HRESULT __stdcall SetSite(IUnknown* s) noexcept override
     {
@@ -149,12 +242,24 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
         {
             if (type == Remove)
             {
-                std::lock_guard lock(g_lock);
-                std::erase_if(g_items, [&](Item const& it) { return it.handle == el.Handle; });
+                std::vector<std::shared_ptr<PinnedItem>> removed;
+                {
+                    std::lock_guard lock(g_lock);
+                    std::erase_if(g_items, [&](Item const& it) { return it.handle == el.Handle; });
+                    std::erase_if(g_pinnedItems, [&](auto const& it)
+                    {
+                        if (it->handle != el.Handle) return false;
+                        removed.push_back(it);
+                        return true;
+                    });
+                }
+                for (auto const& item : removed)
+                    if (item->hiddenByUs) if (auto button = item->button.get()) button.Visibility(Visibility::Visible);
                 return S_OK;
             }
             const wchar_t* name = el.Name ? el.Name : L"";
             const wchar_t* type = el.Type ? el.Type : L"";
+            if (!wcscmp(name, L"IconPanel")) TrackPinned(el);
             int bit = -1;
             if (!wcscmp(name, L"BackgroundFill") || !wcscmp(name, L"BackgroundStroke")) bit = 0;
             else for (auto& p : kParts) if (!wcscmp(type, p.type) && !wcscmp(name, p.name)) bit = p.bit;

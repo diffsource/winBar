@@ -1,50 +1,51 @@
-# winBar
+# winBar — eine ruhige Taskleiste für Windows 11
 
-winBar passt die Windows-11-Taskleiste an. Du kannst ihren Hintergrund gestalten, Elemente ein- oder ausblenden, eine eigene Uhr anzeigen und einzelne Programme von der Taskleiste nehmen. Die App läuft im Infobereich weiter und hält die gewählten Einstellungen aktiv.
+[![Build](https://github.com/diffsource/winBar/actions/workflows/build.yml/badge.svg)](https://github.com/diffsource/winBar/actions/workflows/build.yml)
 
-## Schnellstart
+winBar macht die Windows-11-Taskleiste klarer: weniger Ablenkung, ein passender Hintergrund und nur die Elemente, die du gerade brauchst. Die kleine App läuft lokal im Infobereich. Es gibt kein Konto und keine Telemetrie.
 
-1. Installiere die [.NET 10 Desktop Runtime für x64](https://dotnet.microsoft.com/download/dotnet/10.0), falls sie noch fehlt.
-2. Lade `TaskbarTweaker.zip` aus den [Releases](../../releases) herunter und entpacke sie vollständig.
-3. Starte `TaskbarTweaker.exe`. Die Datei `TaskbarTap.dll` muss im selben Ordner liegen.
+## In 30 Sekunden startklar
 
-**Einstellungen öffnen:** Halte **Alt** gedrückt und bewege die Maus auf die Taskleiste. Über der Taskleiste erscheint **Einstellungen**. Alternativ klicke auf das winBar-Symbol im Infobereich oder drücke **Strg+Alt+S**. Ein Klick auf das Schließen-Symbol des Einstellungsfensters lässt winBar im Hintergrund weiterlaufen. Über das Kontextmenü des Infobereich-Symbols → **Beenden** schließt du die App und stellst die Taskleiste wieder her.
+1. Installiere bei Bedarf die [.NET 10 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/10.0).
+2. Lade `TaskbarTweaker.zip` aus den [Releases](../../releases) herunter und entpacke die ZIP-Datei vollständig.
+3. Starte `TaskbarTweaker.exe`. `TaskbarTap.dll` muss daneben liegen.
 
-## Funktionen
+Halte **Alt** und bewege die Maus auf die Taskleiste: Ein kleiner **Einstellungen**-Button erscheint. Du kannst das Fenster auch mit **Strg+Alt+S** oder über das winBar-Symbol im Infobereich öffnen. Das Schließen des Fensters lässt winBar weiterlaufen; **Beenden** im Kontextmenü des Infobereich-Symbols stellt die Taskleiste wieder her.
 
-| Bereich | Möglichkeiten |
+## Die wichtigsten Funktionen
+
+| Funktion | So hilft sie dir |
 | --- | --- |
-| Aussehen | Standard, transparent, getönte Farbe, Blur oder Acrylic; Farbe und Deckkraft einstellen |
-| Uhr | Eine kompakte Uhr mit Uhrzeit und Datum rechts auf der Taskleiste einblenden. Sie liegt über der Windows-Uhr; Klicks erreichen weiterhin Windows. |
-| Programme | Laufende Programme oder eine EXE-Datei auswählen und deren Taskleisten-Schaltflächen ausblenden. Die Fenster bleiben geöffnet und sind weiterhin über **Alt+Tab** erreichbar. |
-| Verhalten | Taskleiste automatisch ausblenden, vollständig verstecken oder winBar mit Windows starten |
-| Windows-Elemente | Ausrichtung, Suche, Gruppierung, Aufgabenansicht, Widgets, Copilot, Chat/Teams, Badges, blinkende Apps, Sekunden, Desktop-Ecke und weitere Schalter |
-| Infobereich | Uhr/Datum, Schnelleinstellungen, Tray-Symbole, Sprachanzeige oder den gesamten Bereich ausblenden |
+| **Clean-Profil** | Blendet Suche, Widgets, Aufgabenansicht, Badges und Tray-Symbole mit einem Klick aus. Ein zweiter Klick stellt deine vorherigen Werte wieder her. |
+| **Angeheftete Apps auf Abruf** | Verbirgt angeheftete Apps ohne laufendes Fenster. Mit **Alt** erscheinen sie; nach dem Loslassen bleiben sie sichtbar, bis die Maus die Taskleiste verlässt. Laufende Apps bleiben sichtbar. |
+| **Drei Schnell-Looks** | **Clear** für Transparenz, **Frost** für Blur und **Solid** für einen ruhigen, getönten Hintergrund. Farbe und Deckkraft lassen sich anschließend frei ändern. |
+| **Kontext-Stil** | Wähle einen anderen Taskleisten-Stil für maximierte Fenster, damit Icons auf jedem Hintergrund lesbar bleiben. |
+| **Design-Uhr** | Zeige rechts nur die Uhrzeit oder Uhrzeit und Datum. Auf Wunsch erscheint sie nur auf dem Hauptmonitor. Klicks erreichen weiterhin die Windows-Uhr. |
+| **Programme ausblenden** | Wähle laufende Programme oder eine EXE-Datei aus. Ihre Fenster bleiben geöffnet und sind über **Alt+Tab** erreichbar. |
 
-Die Einstellungen für ausgeblendete Programme beziehen sich auf den **vollständigen Pfad der EXE-Datei** und gelten auch beim nächsten Start von winBar. Angeheftete Symbole bleiben angeheftet. Manche Anwendungen verwalten ihre Taskleisten-Schaltflächen selbst; bei ihnen kann das Ausblenden wirkungslos sein. Es werden keine Programme beendet oder Dateien verändert.
+Dazu kommen die vorhandenen Schalter für Ausrichtung, Gruppierung, Suche, Widgets, Copilot, Chat/Teams, Sekunden, automatische Ausblendung und weitere Windows-Elemente. Unter **Aktionen** kannst du den Explorer neu starten, Einstellungen zurücksetzen oder angeheftete Apps mit vorherigem Backup lösen.
 
-Unter **Aktionen** kannst du den Explorer neu starten, die Einstellungen zurücksetzen oder alle angehefteten Apps lösen. Beim Lösen der angehefteten Apps legt winBar vorher ein Backup an und zeigt dir anschließend den Speicherort und die Schritte zur Wiederherstellung.
+## Gut zu wissen
 
-## Hinweise
-
-- winBar ist für **Windows 11 x64** ausgelegt. Die Oberfläche folgt dem hellen oder dunklen Windows-Modus.
-- Einige Änderungen an Windows-Elementen werden erst nach einem Explorer-Neustart sichtbar.
-- Die Optionen für den Infobereich und den transparenten Hintergrund greifen in die XAML-Oberfläche der Taskleiste ein. Windows-Updates können diese Funktionen beeinträchtigen. Nach einem winBar-Update solltest du den Explorer einmal neu starten, damit die neue `TaskbarTap.dll` geladen wird.
-- Wenn die Taskleiste vollständig versteckt ist, öffne die Einstellungen mit **Strg+Alt+S** und deaktiviere die Option dort wieder.
-- Die Einstellungen liegen in `%AppData%\TaskbarTweaker\settings.json`.
+- **Angeheftete Apps auf Abruf** ist experimentell. winBar erkennt die Schaltflächen über den XAML-Zustand der Windows-11-Taskleiste. Ändert Windows diesen Aufbau, kann die Funktion ausfallen. Dann hilft oft ein Explorer-Neustart nach einem winBar-Update.
+- Das Ausblenden **einzelner Programme** betrifft laufende Fenster anhand des vollständigen EXE-Pfads. Angeheftete Symbole bleiben angeheftet. Manche Apps verwalten ihre Schaltflächen selbst und lassen sich darüber nicht ausblenden.
+- Die **Design-Uhr** liegt über der Windows-Uhr. Bei Vollbildanwendungen wird sie ausgeblendet.
+- Das **Clean-Profil** merkt sich deine vorherigen Werte auch über einen Neustart von winBar. Solange es aktiv ist, sind die betroffenen Einzelschalter gesperrt.
+- Bei vollständig versteckter Taskleiste öffnet **Strg+Alt+S** die Einstellungen, damit du sie wieder einblenden kannst.
+- Einige Windows-Schalter werden erst nach einem Explorer-Neustart sichtbar. Die Einstellungen liegen unter `%AppData%\TaskbarTweaker\settings.json`.
 
 ## Selbst bauen
 
-Benötigt werden das [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) und Visual Studio mit dem **Desktopentwicklung mit C++**-Workload (MSVC x64). Führe im Projektordner aus:
+Du brauchst das [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) und Visual Studio mit **Desktopentwicklung mit C++** (MSVC x64). Im Projektordner:
 
 ```powershell
 dotnet publish -c Release -o publish -p:PublishSingleFile=true --self-contained false
 ```
 
-Der Build kompiliert `tap\TaskbarTap.cpp` automatisch zu `TaskbarTap.dll`. Beide Dateien aus `publish\` werden für die fertige App benötigt.
+Der Build erstellt `TaskbarTap.dll` aus `tap\TaskbarTap.cpp`. Die fertige App besteht aus `publish\TaskbarTweaker.exe` und `publish\TaskbarTap.dll`. GitHub Actions baut beide Dateien auf Windows und stellt sie als Build-Artefakt bereit.
 
-## Technik
+## Wie winBar arbeitet
 
-winBar setzt den Taskleisten-Stil mit `SetWindowCompositionAttribute` und aktualisiert ihn regelmäßig, weil der Explorer ihn überschreiben kann. `TaskbarTap.dll` blendet den XAML-Hintergrund und auf Wunsch Teile des Infobereichs aus. Windows-Elemente werden über Einstellungen unter `HKCU` gesteuert. Für einzelne Programm-Schaltflächen nutzt winBar `ITaskbarList`. Das Alt-Menü und die Design-Uhr sind kleine Fenster ohne eigenen Taskleisten-Eintrag.
+winBar setzt den Hintergrund mit `SetWindowCompositionAttribute`. Eine kleine DLL im Explorer passt die XAML-Ebene der Taskleiste an und blendet auf Wunsch Infobereich- oder angeheftete App-Elemente aus. Die normalen Windows-Schalter liegen unter `HKCU`; für einzelne laufende App-Schaltflächen nutzt winBar `ITaskbarList`.
 
-Die DLL wird in `explorer.exe` geladen. Sicherheitssoftware kann darauf reagieren. Die verwendeten undokumentierten Windows-Schnittstellen können sich mit Updates ändern.
+Die App prüft die Alt-Interaktion alle 100 ms. Hintergrund-Stil und Explorer-DLL werden nur bei Änderungen oder als kurze Rückfallprüfung aktualisiert; laufende Programme werden alle zwei Sekunden geprüft. Die DLL wird in `explorer.exe` geladen und kann deshalb Sicherheitssoftware auslösen. Undokumentierte Windows-Schnittstellen können sich mit Updates ändern.
