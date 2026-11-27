@@ -96,7 +96,7 @@ internal sealed class MonitorLayoutDialog : Form
             BackColor = Color.FromArgb(62, 107, 174), ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
         save.FlatAppearance.BorderSize = 0;
         save.Click += (_, _) => { SaveCurrent(); DialogResult = DialogResult.OK; Close(); };
-        actions.Controls.AddRange([cancel, save]);
+        actions.Controls.AddRange([save, cancel]);
         footer.Controls.Add(actions, 1, 0);
         shell.Controls.Add(footer, 0, 2);
         AcceptButton = save;
@@ -165,7 +165,7 @@ internal sealed class MonitorLayoutDialog : Form
         secondZone.SelectedIndex = 0;
         secondZone.Dock = DockStyle.Top;
         Row(panel, 2, "Beim Darüberfahren", secondZone);
-        Full(panel, new Label { Text = "Die Uhr erscheint nur auf diesem Bildschirm. Die zweite Zeitzone öffnet sich bei Mausnähe.",
+        Full(panel, new Label { Text = "Diese Einstellung gilt für diesen Bildschirm. Die zweite Zeitzone öffnet sich bei Mausnähe.",
             AutoSize = true, MaximumSize = new Size(360, 0), ForeColor = Color.FromArgb(93, 110, 133),
             Margin = new Padding(3, 18, 3, 3) }, 3);
         return tab;
@@ -210,10 +210,12 @@ internal sealed class MonitorLayoutDialog : Form
     static (TabPage Tab, TableLayoutPanel Panel) Page(string title)
     {
         var tab = new TabPage(title) { BackColor = Color.FromArgb(250, 252, 255) };
-        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, ColumnCount = 2,
+        var panel = new TableLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true, ColumnCount = 2, RowCount = 11,
             Padding = new Padding(14, 18, 14, 12) };
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
+        for (int i = 0; i < 10; i++) panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         tab.Controls.Add(panel);
         return (tab, panel);
     }

@@ -2,7 +2,7 @@
 
 [![Build](https://github.com/diffsource/winBar/actions/workflows/build.yml/badge.svg)](https://github.com/diffsource/winBar/actions/workflows/build.yml) [![Latest release](https://img.shields.io/github/v/release/diffsource/winBar?label=release)](https://github.com/diffsource/winBar/releases/latest)
 
-**Make the Windows 11 taskbar feel quieter.** winBar is a lightweight taskbar customizer with glass themes, compact app stacks, a focus lens, an on-demand system tray, and a styled clock. Keep the Windows taskbar familiar while making room for the things you actually use. It runs locally, with no account or telemetry.
+**Make the Windows 11 taskbar feel quieter.** winBar is a lightweight taskbar customizer with glass themes, live app-stack previews, one-click window workspaces, per-monitor layouts, a focus lens, an on-demand system tray, and a styled clock. Keep the Windows taskbar familiar while making room for the things you actually use. It runs locally, with no account or telemetry.
 
 [Download the latest release](https://github.com/diffsource/winBar/releases/latest/download/TaskbarTweaker.zip) · [See all releases](https://github.com/diffsource/winBar/releases) · [Report an issue](https://github.com/diffsource/winBar/issues)
 
@@ -21,7 +21,9 @@ A short welcome tour appears on first use. To reopen settings later, **hold Alt 
 | Feature | What it does |
 | --- | --- |
 | **Glass themes** | Choose Glass, Glacier, Ink, or Adaptive. Fine-tune color and opacity, sample a subtle tint from the active app icon, or share a visual-only theme as JSON. |
-| **App stacks** | Collapse up to four groups of adjacent pinned apps into their first icon. Hover or hold Alt to expand; running apps stay visible. Optionally compact only when space is tight, and launch a selected set together from the tray menu. |
+| **App stacks** | Collapse up to four groups of adjacent pinned apps into their first icon. Hover to expand and see live previews of the selected apps' open windows; running apps stay visible. Optionally compact only when space is tight, and launch a selected set together from the tray menu. |
+| **Window workspaces** | Save selected apps and their visible window positions. Restore the arrangement on demand from Settings or the tray menu, including across connected monitors. |
+| **Per-monitor layouts** | Give each connected display its own appearance, clock, right-side visibility, pinned-app behavior, and selection of app stacks. |
 | **Focus lens** | Keep the active app prominent and reveal other running app buttons with Alt. Pinned favorites remain within reach. |
 | **Right side on demand** | Set clock, Quick Settings, tray icons, and language indicator independently to **Always**, **On demand**, or **Off**. On-demand items appear with Alt or when you approach the right edge. |
 | **Clean preset** | Hide Search, Widgets, Task View, badges, and tray clutter together. Click again to restore the previous values. |
@@ -56,6 +58,9 @@ Choose a contiguous range of Windows pins. The first pin stays as a small anchor
 - **Windows 11 x64** is the target. The Explorer helper uses Windows 11 XAML internals, so a Windows update may temporarily break some effects. If a new version changes the helper, restart Explorer when convenient to load the new DLL.
 - The app's current interface and first-use tour are in German; this README is in English for the wider Windows community.
 - **App stacks and on-demand pinned apps** use Windows 11 XAML internals and are experimental. A stack covers adjacent pin positions in the current Windows order; it does not freely regroup arbitrary pins. The first pin is its anchor. Stack groups take precedence over the older pinned-app reveal option.
+- **Live stack previews** show windows matching the EXE or shortcut paths explicitly selected for that stack in the editor. Up to six DWM thumbnails exist only while the popup is open. A stack without selected paths shows a setup hint.
+- **Window workspaces** launch only apps you select. They save window titles, EXE paths, and positions in local settings, then make a bounded window search after you click Restore. They do not close other windows; apps that block external positioning may need manual adjustment.
+- **Per-monitor layouts** use Windows display device names such as `\\.\DISPLAY1`. A changed dock or display arrangement may require you to choose the display again. If winBar cannot identify an Explorer element's taskbar unambiguously, that element keeps the global setting.
 - **Folder shelf taskbar button:** In Settings, add folders and choose **Taskleisten-Button erstellen**. winBar creates a Start-menu shortcut and shows it in Explorer so you can pin it to the Windows taskbar. Clicking the pinned shortcut opens the folder shelf near that position; its small helper process exits when you close the popup. Windows controls where the pinned button appears.
 - **Auto compact** estimates crowding from taskbar width, configured pins, and running windows. It does not rearrange your Windows pins.
 - **Hiding an app** affects its running taskbar buttons by full EXE path. It does not unpin the app, and some programs manage their own buttons.

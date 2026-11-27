@@ -11,7 +11,8 @@
 //               bit 2 = collapse stacks (clear it to show all members when there is room).
 //               Positions refer to pinned buttons in their visual order; a stack's first icon is its anchor.
 //   WM_APP + 4: wParam = client HWND for stack hover notifications.
-//   Client receives WM_APP + 5: wParam = stack slot 0..3, lParam = 1 entered / 0 exited.
+//   Client receives WM_APP + 5: wParam = owning taskbar HWND (0 if unresolved),
+//       lParam = (stack slot 0..3 << 1) | entered bit. Resolve slot within that taskbar's groups.
 //   WM_COPYDATA dwData 'WBM6': uint32 version=1, uint32 count (0..8), then count
 //       packed 32-byte entries: uint64 taskbar HWND, uint64 stack spans,
 //       uint32 tray mask, uint32 flags, uint32 keep pinned, uint32 reserved=0.
@@ -134,6 +135,21 @@ static HWND g_wnd;
 
 static HWND const kAmbiguousOwner = reinterpret_cast<HWND>(static_cast<intptr_t>(-1));
 
+// Caller holds g_lock. Zero means the caller must use the global stack definition.
+static HWND OwnerForRoot(void* root)
+{
+    if (!root) return nullptr;
+    auto found = g_rootOwners.find(root);
+    return found == g_rootOwners.end() || found->second == kAmbiguousOwner ? nullptr : found->second;
+}
+
+static void PostStackHover(HWND receiver, HWND taskbar, int slot, bool entered)
+{
+    if (receiver && slot >= 0 && slot < 4)
+        PostMessageW(receiver, WM_APP + 5, reinterpret_cast<WPARAM>(taskbar),
+            (static_cast<LPARAM>(slot) << 1) | (entered ? 1 : 0));
+}
+
 static uint64_t SanitizeSpans(uint64_t requested)
 {
     uint64_t accepted = 0;
@@ -166,10 +182,10 @@ static MonitorConfig ConfigForRoot(void* root)
     config.collapseStacks = g_stackCollapseActive;
     config.pointerOnBar = true;
     if (g_monitorConfigs.empty() || !root) return config;
-    auto owner = g_rootOwners.find(root);
-    if (owner == g_rootOwners.end() || !owner->second || owner->second == kAmbiguousOwner) return config;
+    auto owner = OwnerForRoot(root);
+    if (!owner) return config;
     for (auto const& override : g_monitorConfigs)
-        if (override.taskbar == owner->second) return override;
+        if (override.taskbar == owner) return override;
     return config;
 }
 
@@ -445,16 +461,20 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
             parsed.push_back(config);
         }
         HWND leaveReceiver = nullptr;
+        HWND leaveTaskbar = nullptr;
         int leaveStack = -1;
         {
             std::lock_guard lock(g_lock);
+            auto previous = ConfigForRoot(g_hoveredRoot);
             g_monitorConfigs.swap(parsed);
             if (g_hoveredStack >= 0)
             {
                 auto effective = ConfigForRoot(g_hoveredRoot);
-                if (count == 0 || !effective.pointerOnBar || !effective.collapseStacks || !effective.stackRanges)
+                if (count == 0 || !effective.pointerOnBar || !effective.collapseStacks ||
+                    !effective.stackRanges || effective.stackRanges != previous.stackRanges)
                 {
                     leaveReceiver = g_hoverReceiver;
+                    leaveTaskbar = OwnerForRoot(g_hoveredRoot);
                     leaveStack = g_hoveredStack;
                     g_hoveredStack = -1;
                     g_hoveredParent = nullptr;
@@ -462,7 +482,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
                 }
             }
         }
-        if (leaveReceiver && leaveStack >= 0) PostMessageW(leaveReceiver, WM_APP + 5, leaveStack, 0);
+        PostStackHover(leaveReceiver, leaveTaskbar, leaveStack, false);
         RefreshTracked();
         return TRUE;
     }
@@ -477,6 +497,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
     {
         std::vector<std::shared_ptr<PinnedItem>> items;
         HWND leaveReceiver = nullptr;
+        HWND leaveTaskbar = nullptr;
         int leaveStack = -1;
         {
             std::lock_guard lock(g_lock);
@@ -488,6 +509,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
             }
             else
             {
+                auto previous = ConfigForRoot(g_hoveredRoot);
                 uint64_t requested = static_cast<uint64_t>(w);
                 uint64_t accepted = 0;
                 bool occupied[32]{};
@@ -504,21 +526,30 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l)
                     accepted |= static_cast<uint64_t>(span) << (group * 10);
                 }
                 bool collapseActive = (l & 4) != 0;
-                if (g_monitorConfigs.empty() && (accepted != g_stackSpans || collapseActive != g_stackCollapseActive || (l & 2) == 0))
+                g_stackSpans = accepted;
+                g_stackRevealAll = (l & 1) != 0;
+                g_stackCollapseActive = collapseActive;
+                auto effective = ConfigForRoot(g_hoveredRoot);
+                bool usesGlobal = true;
+                auto owner = OwnerForRoot(g_hoveredRoot);
+                for (auto const& config : g_monitorConfigs)
+                    if (config.taskbar == owner) { usesGlobal = false; break; }
+                if (g_hoveredStack >= 0 &&
+                    (effective.stackRanges != previous.stackRanges ||
+                     effective.collapseStacks != previous.collapseStacks ||
+                     (usesGlobal && (l & 2) == 0)))
                 {
                     leaveReceiver = g_hoverReceiver;
+                    leaveTaskbar = OwnerForRoot(g_hoveredRoot);
                     leaveStack = g_hoveredStack;
                     g_hoveredStack = -1;
                     g_hoveredParent = nullptr;
                     g_hoveredRoot = nullptr;
                 }
-                g_stackSpans = accepted;
-                g_stackRevealAll = (l & 1) != 0;
-                g_stackCollapseActive = collapseActive;
             }
             items = g_pinnedItems;
         }
-        if (leaveReceiver && leaveStack >= 0) PostMessageW(leaveReceiver, WM_APP + 5, leaveStack, 0);
+        PostStackHover(leaveReceiver, leaveTaskbar, leaveStack, false);
         for (auto const& item : items)
             item->queue.TryEnqueue([item] { ApplyPinned(item); });
         return items.size();
@@ -622,19 +653,27 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
                 std::vector<std::shared_ptr<PinnedItem>> items;
                 HWND receiver = nullptr;
                 HWND previousReceiver = nullptr;
+                HWND previousTaskbar = nullptr;
+                HWND taskbar = nullptr;
                 int previousStack = -1;
                 {
                     std::lock_guard lock(g_lock);
                     if (g_hoveredStack == current->stackIndex && g_hoveredParent == current->parentIdentity) return;
-                    if (g_hoveredStack >= 0) { previousStack = g_hoveredStack; previousReceiver = g_hoverReceiver; }
+                    if (g_hoveredStack >= 0)
+                    {
+                        previousStack = g_hoveredStack;
+                        previousReceiver = g_hoverReceiver;
+                        previousTaskbar = OwnerForRoot(g_hoveredRoot);
+                    }
                     g_hoveredStack = current->stackIndex;
                     g_hoveredParent = current->parentIdentity;
                     g_hoveredRoot = current->rootIdentity;
                     receiver = g_hoverReceiver;
+                    taskbar = OwnerForRoot(current->rootIdentity);
                     items = g_pinnedItems;
                 }
-                if (previousReceiver) PostMessageW(previousReceiver, WM_APP + 5, previousStack, 0);
-                if (receiver) PostMessageW(receiver, WM_APP + 5, current->stackIndex, 1);
+                PostStackHover(previousReceiver, previousTaskbar, previousStack, false);
+                PostStackHover(receiver, taskbar, current->stackIndex, true);
                 for (auto const& other : items)
                     other->queue.TryEnqueue([other] { ApplyPinned(other); });
             });
@@ -643,12 +682,16 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
                 auto current = weak.lock();
                 if (!current || current->stackIndex < 0) return;
                 HWND receiver = nullptr;
+                HWND taskbar = nullptr;
                 {
                     std::lock_guard lock(g_lock);
                     if (g_hoveredStack == current->stackIndex && g_hoveredParent == current->parentIdentity)
+                    {
                         receiver = g_hoverReceiver;
+                        taskbar = OwnerForRoot(current->rootIdentity);
+                    }
                 }
-                if (receiver) PostMessageW(receiver, WM_APP + 5, current->stackIndex, 0);
+                PostStackHover(receiver, taskbar, current->stackIndex, false);
             });
             ApplyPinned(item);
             return;
@@ -683,18 +726,50 @@ struct Tap : implements<Tap, IObjectWithSite, IVisualTreeServiceCallback2, non_a
             if (type == Remove)
             {
                 std::vector<std::shared_ptr<PinnedItem>> removed;
+                std::vector<void*> affectedRoots;
+                HWND leaveReceiver = nullptr;
+                HWND leaveTaskbar = nullptr;
+                int leaveStack = -1;
                 {
                     std::lock_guard lock(g_lock);
-                    std::erase_if(g_items, [&](Item const& it) { return it.handle == el.Handle; });
+                    std::erase_if(g_items, [&](Item const& it)
+                    {
+                        if (it.handle != el.Handle) return false;
+                        affectedRoots.push_back(it.rootIdentity);
+                        return true;
+                    });
                     std::erase_if(g_pinnedItems, [&](auto const& it)
                     {
                         if (it->handle != el.Handle) return false;
                         removed.push_back(it);
+                        affectedRoots.push_back(it->rootIdentity);
+                        if (g_hoveredStack == it->stackIndex && g_hoveredParent == it->parentIdentity)
+                        {
+                            leaveReceiver = g_hoverReceiver;
+                            leaveTaskbar = OwnerForRoot(g_hoveredRoot);
+                            leaveStack = g_hoveredStack;
+                            g_hoveredStack = -1;
+                            g_hoveredParent = nullptr;
+                            g_hoveredRoot = nullptr;
+                        }
                         return true;
                     });
+                    for (auto root : affectedRoots)
+                    {
+                        if (!root) continue;
+                        bool stillTracked = false;
+                        for (auto const& item : g_items)
+                            if (item.rootIdentity == root) { stillTracked = true; break; }
+                        if (!stillTracked)
+                            for (auto const& item : g_pinnedItems)
+                                if (item->rootIdentity == root) { stillTracked = true; break; }
+                        if (!stillTracked) g_rootOwners.erase(root);
+                    }
                 }
+                PostStackHover(leaveReceiver, leaveTaskbar, leaveStack, false);
                 for (auto const& item : removed)
                     if (item->hiddenByUs) if (auto button = item->button.get()) button.Visibility(Visibility::Visible);
+                for (auto root : affectedRoots) RefreshTracked(root);
                 return S_OK;
             }
             const wchar_t* name = el.Name ? el.Name : L"";

@@ -13,9 +13,9 @@ sealed class WelcomeForm : Form
 
     static readonly (string Heading, string Description, string Hint)[] Pages =
     [
-        ("Eine ruhigere Taskleiste", "Wähle Clear, Frost oder Solid. Weniger Ablenkung lässt mehr Platz für das, was du gerade tust.", "Unter Aussehen kannst du den Look jederzeit ändern."),
+        ("Eine ruhigere Taskleiste", "Wähle Glass, Glacier, Ink oder Adaptive. Weniger Ablenkung lässt mehr Platz für das, was du gerade tust.", "Unter Aussehen kannst du den Look jederzeit ändern."),
         ("Wichtiges bleibt griffbereit", "Halte Alt über der Taskleiste: Der Einstellungen-Button und weitere Icons erscheinen bei Bedarf.", "Strg + Alt + S öffnet die Einstellungen auch bei versteckter Taskleiste."),
-        ("Mach sie zu deiner Taskleiste", "Zeige eine schlichte Uhr, blende App-Buttons aus oder speichere ein Arbeits- und Privatprofil. Alles bleibt lokal.", "Fang mit einer Änderung an. Das Clean-Profil lässt sich mit einem Klick zurücknehmen.")
+        ("Dein Setup, ein Klick", "Gruppiere Apps in Stapeln, speichere Fenster als Arbeitsbereich und gestalte jeden Monitor für sich. Alles bleibt lokal.", "Starte mit einem Design. Stapel, Arbeitsbereiche und Monitore kannst du später einrichten.")
     ];
 
     public WelcomeForm()

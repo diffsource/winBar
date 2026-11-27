@@ -122,6 +122,7 @@ static class Taskbar
             }
             return;
         }
+        if (lastTapWindow != IntPtr.Zero) MonitorTapProtocol.Invalidate();
         lastTapWindow = IntPtr.Zero;
         lastPreviewRegisteredWindow = IntPtr.Zero;
         if ((!requireHelper && !hideBackground && trayMask == 0 && !hidePinned && stackRanges == 0) ||
@@ -359,6 +360,8 @@ class MainForm : Form
     readonly DesignClock clock = new();
     readonly MediaRail mediaRail;
     StackWindowPreviewPopup? stackPreview;
+    IntPtr stackPreviewBar;
+    int stackPreviewSlot = -1;
     readonly CancellationTokenSource workspaceStop = new();
     readonly ProgramHider programHider = new();
     ReleaseUpdater? updater;
@@ -369,22 +372,82 @@ class MainForm : Form
     CheckBox? presentationToggle;
     ToolStripMenuItem? presentationMenu;
     long nextProgramScan, nextVisualRefresh, nextClockRefresh, rightRevealUntil, nextStackDensity;
-    int lastAppliedStyle = -1;
     int lastEffectiveTrayMask = -1;
     ulong appliedStackRanges = ulong.MaxValue;
     int appliedStackFlags = -1;
     bool stackCollapseActive = true;
+    bool nativeLayoutReady;
+    long nextMonitorRefresh;
     long nextSceneCheck;
     string? activeAutoSceneId;
     SceneSnapshot? beforeAutoScene;
     int lastProfileHotkey;
     void UpdateClocks() => clock.Update(screen =>
     {
-        var visual = MonitorLayouts.Resolve(screen, s, s.MonitorLayouts);
+        var visual = MonitorLayouts.Resolve(screen, s, s.MonitorLayouts, nativeLayoutReady);
+        var overrideLayout = nativeLayoutReady ? MonitorLayouts.ForScreen(screen, s.MonitorLayouts) : null;
+        var modes = overrideLayout?.NativeVisibilityEnabled == true && overrideLayout.RightModes is { Length: 4 }
+            ? overrideLayout.RightModes : s.RightModes!;
+        var bar = Taskbar.VisibleBounds().FirstOrDefault(bounds =>
+            string.Equals(Screen.FromRectangle(bounds).DeviceName, screen.DeviceName, StringComparison.OrdinalIgnoreCase));
+        var pointer = Cursor.Position;
+        bool revealed = AltSettingsButton.AltDown ||
+            (bar != Rectangle.Empty && RightAreaModes.HasPeek(modes) && NearRightArea(bar, pointer)) ||
+            (rightRevealed && bar != Rectangle.Empty && InRightFlyoutArea(bar, pointer));
         var layout = !s.HideTaskbar && !presentationMode && visual.ClockAllowed &&
-            RightAreaModes.ClockVisible(s.RightModes!, rightRevealed) ? visual.ClockLayout : 0;
+            RightAreaModes.ClockVisible(modes, revealed) ? visual.ClockLayout : 0;
         return new MonitorClock(layout, visual.SecondaryTimeZoneId);
     });
+
+    bool HasNativeLayoutOverrides() => s.MonitorLayouts.Any(layout => layout.Version == 1 &&
+        (layout.AppearanceEnabled || layout.NativeVisibilityEnabled || layout.NativePinnedEnabled || layout.NativeStacksEnabled));
+
+    bool SendMonitorLayouts(bool altDown, Point pointer)
+    {
+        var tap = Taskbar.NativeTapWindow;
+        if (tap == IntPtr.Zero) return false;
+        if (!HasNativeLayoutOverrides())
+        {
+            MonitorTapProtocol.Send(tap, Array.Empty<MonitorTapEntry>());
+            return false;
+        }
+        var bars = MonitorTaskbars.Enumerate();
+        if (bars.Count == 0 || bars.Count > 8) return false;
+        var foreground = Taskbar.ForegroundWindow;
+        var foregroundScreen = foreground == IntPtr.Zero ? null : Screen.FromHandle(foreground);
+        bool maximized = Taskbar.ActiveWindowMaximized;
+        var entries = new List<MonitorTapEntry>(bars.Count);
+        foreach (var bar in bars)
+        {
+            var layout = MonitorLayouts.ForScreen(bar.Screen, s.MonitorLayouts);
+            var visual = MonitorLayouts.Resolve(bar.Screen, s, s.MonitorLayouts, true);
+            bool activeHere = foregroundScreen != null &&
+                string.Equals(foregroundScreen.DeviceName, bar.Screen.DeviceName, StringComparison.OrdinalIgnoreCase);
+            int style = visual.ContextStyle && maximized && activeHere ? visual.MaximizedStyle : visual.Style;
+            var modes = layout?.NativeVisibilityEnabled == true && layout.RightModes is { Length: 4 }
+                ? layout.RightModes : s.RightModes!;
+            bool pointerOnBar = bar.Bounds.Contains(pointer);
+            bool revealRight = altDown || (RightAreaModes.HasPeek(modes) && NearRightArea(bar.Bounds, pointer)) ||
+                (rightRevealed && InRightFlyoutArea(bar.Bounds, pointer));
+            uint trayMask = (uint)(presentationMode ? 31 : RightAreaModes.HiddenMask(modes, revealRight));
+            var stacks = s.AppStacks.Copy();
+            if (layout?.NativeStacksEnabled == true)
+            {
+                stacks.Enabled = true;
+                var visible = (layout.VisibleStackIds ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var group in stacks.Groups) group.Enabled = visible.Contains(group.Id.ToString("N"));
+            }
+            ulong spans = stacks.PackRanges();
+            bool hidePinned = layout?.NativePinnedEnabled == true ? layout.HidePinnedUntilAlt && !altDown :
+                s.HidePinnedUntilAlt && !pinnedRevealed;
+            if (spans != 0) hidePinned = false;
+            uint keepPinned = (uint)(layout?.NativePinnedEnabled == true ? Math.Clamp(layout.KeepPinnedCount, 0, 5) : s.KeepPinnedCount);
+            uint flags = (uint)((style > 0 ? 1 : 0) | (hidePinned ? 2 : 0) | (altDown ? 4 : 0) |
+                (pointerOnBar ? 8 : 0) | (stackCollapseActive ? 16 : 0));
+            entries.Add(new MonitorTapEntry(bar.Handle, spans, trayMask, flags, keepPinned));
+        }
+        return MonitorTapProtocol.Send(tap, entries);
+    }
     IEnumerable<string> CurrentHiddenPrograms => (s.HiddenPrograms ?? []).Concat(presentationMode ? s.PresentationHiddenPrograms ?? [] : []);
 
     public MainForm(bool startHidden)
@@ -925,7 +988,7 @@ class MainForm : Form
                 var visible = options.VisibleStackIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
                 foreach (var group in s.AppStacks.Groups) group.Enabled = visible.Contains(group.Id.ToString("N"));
             }
-            if (options.MonitorLayouts != null) s.MonitorLayouts = options.MonitorLayouts;
+            if (options.MonitorLayouts != null) { s.MonitorLayouts = options.MonitorLayouts; nextMonitorRefresh = 0; }
             Taskbar.AutoHide = options.AutoHide;
             s.Save();
             Taskbar.Notify();
@@ -989,7 +1052,7 @@ class MainForm : Form
             if (dialog.ShowDialog(this) != DialogResult.OK) return;
             s.MonitorLayouts = dialog.Layouts;
             s.Save();
-            nextVisualRefresh = nextClockRefresh = 0;
+            nextVisualRefresh = nextClockRefresh = nextMonitorRefresh = 0;
             UpdateClocks();
         };
         Add(monitorSettings);
@@ -1145,7 +1208,7 @@ class MainForm : Form
             }
             int stackFlags = stackRanges == 0 ? 0 :
                 (altDown ? 1 : 0) | (bars.Any(bar => bar.Contains(pointer)) ? 2 : 0) | (stackCollapseActive ? 4 : 0);
-            bool maximized = s.ContextStyle && Taskbar.ActiveWindowMaximized;
+            bool maximized = Taskbar.ActiveWindowMaximized;
             if (now >= nextVisualRefresh || pinnedHidden != lastPinnedHidden || maximized != lastMaximized ||
                 effectiveTrayMask != lastEffectiveTrayMask || stackRanges != appliedStackRanges || stackFlags != appliedStackFlags)
             {
@@ -1155,15 +1218,27 @@ class MainForm : Form
                 lastEffectiveTrayMask = effectiveTrayMask;
                 appliedStackRanges = stackRanges;
                 appliedStackFlags = stackFlags;
-                int activeStyle = maximized ? s.MaximizedStyle : s.Style;
-                int? appTint = s.AppAccent ? AppAccent.ForegroundColor(Taskbar.ForegroundWindow) : null;
-                int activeColor = appTint.HasValue ? (s.Color & unchecked((int)0xFF000000)) | appTint.Value
-                    : s.AutoContrast ? Taskbar.SystemTint(s.Color) : s.Color;
-                if (activeStyle != 0 || lastAppliedStyle > 0)
-                    Taskbar.SetAccent(AccentFor[activeStyle], activeStyle == 1 ? 0 : Taskbar.ToAbgr(activeColor));
-                lastAppliedStyle = activeStyle;
-                Taskbar.Tap(activeStyle > 0, effectiveTrayMask, pinnedHidden, s.KeepPinnedCount, stackRanges, stackFlags);
+                int activeStyle = s.ContextStyle && maximized ? s.MaximizedStyle : s.Style;
+                Taskbar.Tap(activeStyle > 0, effectiveTrayMask, pinnedHidden, s.KeepPinnedCount,
+                    stackRanges, stackFlags, HasNativeLayoutOverrides());
+                var foreground = Taskbar.ForegroundWindow;
+                var foregroundScreen = foreground == IntPtr.Zero ? null : Screen.FromHandle(foreground);
+                int? appTint = s.AppAccent || s.MonitorLayouts.Any(layout => layout.AppAccent)
+                    ? AppAccent.ForegroundColor(foreground) : null;
+                MonitorAccent.Apply(MonitorTaskbars.Enumerate(),
+                    screen => MonitorLayouts.Resolve(screen, s, s.MonitorLayouts, nativeLayoutReady),
+                    foregroundScreen, maximized, appTint);
                 if (s.HideTaskbar) Taskbar.Show(false);
+            }
+            if (now >= nextMonitorRefresh)
+            {
+                bool ready = SendMonitorLayouts(altDown, pointer);
+                nextMonitorRefresh = now + (ready ? 200 : 2000);
+                if (ready != nativeLayoutReady)
+                {
+                    nativeLayoutReady = ready;
+                    nextVisualRefresh = nextClockRefresh = 0;
+                }
             }
             if (now >= nextClockRefresh)
             {
@@ -1212,7 +1287,8 @@ class MainForm : Form
     {
         if (message.Msg == 0x8005)
         {
-            OnStackPreviewHover(message.WParam.ToInt32(), message.LParam != IntPtr.Zero);
+            int payload = message.LParam.ToInt32();
+            OnStackPreviewHover(message.WParam, payload >> 1, (payload & 1) != 0);
             return;
         }
         if (message.Msg == 0x007E) nextSceneCheck = 0; // WM_DISPLAYCHANGE
@@ -1224,21 +1300,31 @@ class MainForm : Form
         base.WndProc(ref message);
     }
 
-    void OnStackPreviewHover(int slot, bool entered)
+    void OnStackPreviewHover(IntPtr ownerBar, int slot, bool entered)
     {
-        var groups = s.AppStacks.ValidPackedGroups();
-        if ((uint)slot >= (uint)groups.Count || !s.AppStacks.Enabled || s.HideTaskbar || presentationMode)
+        if (!entered)
+        {
+            if (stackPreviewBar == ownerBar && stackPreviewSlot == slot) stackPreview?.ScheduleClose();
+            return;
+        }
+        var config = s.AppStacks.Copy();
+        var mappedBar = ownerBar == IntPtr.Zero ? null : MonitorTaskbars.Enumerate().FirstOrDefault(bar => bar.Handle == ownerBar);
+        var layout = nativeLayoutReady && mappedBar != null ? MonitorLayouts.ForScreen(mappedBar.Screen, s.MonitorLayouts) : null;
+        if (layout?.NativeStacksEnabled == true)
+        {
+            config.Enabled = true;
+            var visible = (layout.VisibleStackIds ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in config.Groups) item.Enabled = visible.Contains(item.Id.ToString("N"));
+        }
+        var groups = config.ValidPackedGroups();
+        if ((uint)slot >= (uint)groups.Count || !config.Enabled || s.HideTaskbar || presentationMode)
         {
             stackPreview?.ScheduleClose();
             return;
         }
         var group = groups[slot];
-        if (!entered)
-        {
-            if (stackPreview?.GroupId == group.Id) stackPreview.ScheduleClose();
-            return;
-        }
-        if (stackPreview is { IsDisposed: false } && stackPreview.GroupId == group.Id)
+        if (stackPreview is { IsDisposed: false } && stackPreview.GroupId == group.Id &&
+            stackPreviewBar == ownerBar && stackPreviewSlot == slot)
         {
             stackPreview.CancelClose();
             return;
@@ -1250,7 +1336,15 @@ class MainForm : Form
             new Rectangle(Math.Clamp(pointer.X - 24, bar.Left, Math.Max(bar.Left, bar.Right - 48)), bar.Top, 48, bar.Height);
         var popup = StackWindowPreviewPopup.ShowFor(group, anchor);
         stackPreview = popup;
-        popup.FormClosed += (_, _) => { if (ReferenceEquals(stackPreview, popup)) stackPreview = null; };
+        stackPreviewBar = ownerBar;
+        stackPreviewSlot = slot;
+        popup.FormClosed += (_, _) =>
+        {
+            if (!ReferenceEquals(stackPreview, popup)) return;
+            stackPreview = null;
+            stackPreviewBar = IntPtr.Zero;
+            stackPreviewSlot = -1;
+        };
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1290,7 +1384,9 @@ class MainForm : Form
         Taskbar.SetPreviewReceiver(IntPtr.Zero);
         workspaceStop.Cancel();
         programHider.Dispose();
-        Taskbar.SetAccent(0, 0);
+        if (Taskbar.NativeTapWindow != IntPtr.Zero)
+            MonitorTapProtocol.Send(Taskbar.NativeTapWindow, Array.Empty<MonitorTapEntry>());
+        MonitorAccent.Reset();
         Taskbar.Tap(false, 0, false, 0);
         Taskbar.Show(true);
         tray.Visible = false;

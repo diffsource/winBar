@@ -56,7 +56,8 @@ internal static class MonitorAccent
             int state = accentFor[style];
             int abgr = style == 1 ? 0 : Taskbar.ToAbgr(color);
             if (applied.TryGetValue(bar.Handle, out var previous) && previous == (state, abgr)) continue;
-            if (style == 0 && !applied.ContainsKey(bar.Handle)) continue;
+            // A previous global Taskbar.SetAccent call may have styled this HWND.
+            // Explicitly clear it even when this is our first per-monitor pass.
             Set(bar.Handle, state, abgr);
             applied[bar.Handle] = (state, abgr);
         }
