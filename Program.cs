@@ -26,6 +26,9 @@ static class Taskbar
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string c, string? w);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string c, string? w);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out NativeRect rect);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, string l, uint flags, uint timeout, out IntPtr res);
     [DllImport("shell32.dll")] static extern IntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -104,6 +107,23 @@ static class Taskbar
 
     public static void Show(bool visible) { foreach (var h in Handles()) ShowWindow(h, visible ? 5 : 0); }
 
+    public static IEnumerable<Rectangle> VisibleBounds()
+    {
+        foreach (var h in Handles())
+            if (IsWindowVisible(h) && GetWindowRect(h, out var r) && r.Right > r.Left && r.Bottom > r.Top)
+                yield return Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+    }
+
+    public static bool CoveredByFullscreenWindow(Rectangle bar)
+    {
+        var foreground = GetForegroundWindow();
+        if (foreground == IntPtr.Zero || foreground == FindWindow("Shell_TrayWnd", null) || !GetWindowRect(foreground, out var r)) return false;
+        var screen = Screen.FromRectangle(bar).Bounds;
+        return r.Left <= screen.Left + 2 && r.Top <= screen.Top + 2 && r.Right >= screen.Right - 2 && r.Bottom >= screen.Bottom - 2;
+    }
+
+    [StructLayout(LayoutKind.Sequential)] struct NativeRect { public int Left, Top, Right, Bottom; }
+
     static APPBARDATA Abd() => new() { cbSize = Marshal.SizeOf<APPBARDATA>(), hWnd = FindWindow("Shell_TrayWnd", null) };
     public static bool AutoHide
     {
@@ -133,6 +153,8 @@ class Settings
     public int Color { get; set; } = 0x40000000;
     public bool HideTaskbar { get; set; }
     public int TrayHide { get; set; } // bit mask, see TaskbarTap.cpp kParts
+    public bool ShowDesignClock { get; set; }
+    public List<string> HiddenPrograms { get; set; } = [];
 
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarTweaker");
     static string FilePath => Path.Combine(Dir, "settings.json");
@@ -167,14 +189,18 @@ class MainForm : Form
 
     readonly Settings s = Settings.Load();
     readonly System.Windows.Forms.Timer timer = new() { Interval = 100 };
+    readonly AltSettingsButton altButton;
+    readonly DesignClock clock = new();
+    readonly ProgramHider programHider = new();
     readonly NotifyIcon tray;
     readonly TableLayoutPanel grid = new() { Dock = DockStyle.Fill, ColumnCount = 2, AutoScroll = true, Padding = new Padding(16, 4, 24, 16) };
-    bool startHidden, exiting, reverting;
+    bool startHidden, exiting, reverting, openHotkeyWasDown;
+    long nextProgramScan;
 
     public MainForm(bool startHidden)
     {
         this.startHidden = startHidden;
-        Text = "Taskbar Tweaker";
+        Text = "winBar · Einstellungen";
         ClientSize = new Size(LogicalToDeviceUnits(580), Math.Min(LogicalToDeviceUnits(760), Screen.PrimaryScreen!.WorkingArea.Height * 9 / 10));
         MinimumSize = new Size(LogicalToDeviceUnits(480), LogicalToDeviceUnits(400));
         StartPosition = FormStartPosition.CenterScreen;
@@ -183,6 +209,7 @@ class MainForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         Controls.Add(grid);
+        altButton = new AltSettingsButton(OpenWindow);
 
         Header("Aussehen");
         var style = Combo("Stil", ["Standard", "Komplett transparent", "Farbe (getönt)", "Blur", "Acrylic"], s.Style);
@@ -219,6 +246,23 @@ class MainForm : Form
         hide.CheckedChanged += (_, _) => { s.HideTaskbar = hide.Checked; if (!hide.Checked) Taskbar.Show(true); s.Save(); };
         var auto = Check("Mit Windows starten (im Tray)", Autostart);
         auto.CheckedChanged += (_, _) => Autostart = auto.Checked;
+
+        Header("Uhr und Programme");
+        var designClock = Check("Design-Uhr rechts auf der Taskleiste anzeigen", s.ShowDesignClock);
+        designClock.CheckedChanged += (_, _) => { s.ShowDesignClock = designClock.Checked; s.Save(); clock.Update(s.ShowDesignClock); };
+        Add(new Label { Text = "Die Uhr liegt über der Windows-Uhr. Klicks gehen weiterhin an Windows.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        var choosePrograms = new Button { Text = "Programme auf der Taskleiste ausblenden…", AutoSize = true, Padding = new Padding(8, 4, 8, 4) };
+        choosePrograms.Click += (_, _) =>
+        {
+            using var dialog = new HiddenProgramsDialog(s.HiddenPrograms ?? []);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            s.HiddenPrograms = dialog.SelectedPaths;
+            s.Save();
+            programHider.Update(s.HiddenPrograms);
+        };
+        Add(choosePrograms);
+        Add(new Label { Text = "Fenster bleiben geöffnet; nur ihre Taskleisten-Schaltflächen werden ausgeblendet. Nicht jede App unterstützt dies.", AutoSize = true, ForeColor = SystemColors.GrayText });
+        programHider.Update(s.HiddenPrograms ?? []);
 
         Header("Elemente");
         var resets = new List<Action>();
@@ -270,6 +314,9 @@ class MainForm : Form
             style.SelectedIndex = 0;
             autoHide.Checked = false;
             hide.Checked = false;
+            designClock.Checked = false;
+            s.HiddenPrograms = [];
+            programHider.Update(s.HiddenPrograms);
             s.Color = new Settings().Color; s.Save();
             alpha.Value = (s.Color >> 24) & 0xFF;
             ShowColor();
@@ -282,7 +329,7 @@ class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("Öffnen", null, (_, _) => OpenWindow());
         menu.Items.Add("Beenden", null, (_, _) => ExitApp());
-        tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "Taskbar Tweaker", Visible = true, ContextMenuStrip = menu };
+        tray = new NotifyIcon { Icon = SystemIcons.Application, Text = "winBar", Visible = true, ContextMenuStrip = menu };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenWindow(); };
 
         // Explorer resets the style on many events, so re-apply continuously.
@@ -291,6 +338,16 @@ class MainForm : Form
             if (s.Style > 0) Taskbar.SetAccent(AccentFor[s.Style], s.Style == 1 ? 0 : Taskbar.ToAbgr(s.Color));
             Taskbar.Tap(s.Style > 0, s.TrayHide);
             if (s.HideTaskbar) Taskbar.Show(false);
+            altButton.Update(!s.HideTaskbar);
+            clock.Update(s.ShowDesignClock && !s.HideTaskbar);
+            bool openHotkeyDown = AltSettingsButton.OpenHotkeyDown;
+            if (openHotkeyDown && !openHotkeyWasDown) OpenWindow();
+            openHotkeyWasDown = openHotkeyDown;
+            if (Environment.TickCount64 >= nextProgramScan)
+            {
+                nextProgramScan = Environment.TickCount64 + 1000;
+                programHider.Refresh();
+            }
         };
         timer.Start();
     }
@@ -309,6 +366,9 @@ class MainForm : Form
     {
         exiting = true;
         timer.Stop();
+        altButton.Close();
+        clock.Dispose();
+        programHider.Dispose();
         Taskbar.SetAccent(0, 0);
         Taskbar.Tap(false, 0);
         Taskbar.Show(true);

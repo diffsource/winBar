@@ -14,9 +14,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tap\**" />
-    <None Include="tap\TaskbarTap.dll" Link="TaskbarTap.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="tap\TaskbarTap.dll" Condition="'$(SkipTapBuild)' != 'true'" Link="TaskbarTap.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
-  <Target Name="BuildTap" BeforeTargets="BeforeBuild" Inputs="tap\TaskbarTap.cpp" Outputs="tap\TaskbarTap.dll">
+  <Target Name="BuildTap" BeforeTargets="BeforeBuild" Condition="'$(SkipTapBuild)' != 'true'" Inputs="tap\TaskbarTap.cpp" Outputs="tap\TaskbarTap.dll">
     <Exec Command="&quot;$(MSBuildProjectDirectory)\tap\build.cmd&quot;" />
   </Target>
 </Project>
