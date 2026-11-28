@@ -48,7 +48,7 @@ internal sealed class SettingsShell : UserControl
         });
         brand.Controls.Add(new Label
         {
-            Text = Localization.T("A quieter taskbar", "Weniger Ablenkung"),
+            Text = Localization.T("A quieter taskbar", "Mehr Ruhe"),
             ForeColor = Color.FromArgb(165, 185, 211), AutoSize = true, Location = new Point(19, 63)
         });
         sidebar.Controls.Add(brand, 0, 0);
@@ -76,6 +76,7 @@ internal sealed class SettingsShell : UserControl
         {
             "clock" => ("Clock", "Uhr"),
             "apps" => ("Apps", "Apps"),
+            "system" => ("Help", "Hilfe"),
             _ => (englishTitle, germanTitle)
         };
         var button = new Button
@@ -141,5 +142,6 @@ internal sealed class SettingsShell : UserControl
             value.Button.ForeColor = Color.White;
         }
         selected.Page.BringToFront();
+        selected.Page.Invalidate(true);
     }
 }

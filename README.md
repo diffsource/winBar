@@ -18,6 +18,12 @@ A short welcome tour appears on first use. To reopen settings later, **hold Alt 
 
 Settings open in **English** on new installations. Use the language selector at the bottom of the sidebar for **Deutsch** or **System**. System follows the Windows UI language when it is German or English and uses English for other languages.
 
+### Settings you can scan
+
+Each page has a small visual explanation: compare the normal and maximized taskbar, see what Alt reveals, or preview the clock and system area. Related controls sit together under short headings. For color and acrylic styles, click anywhere on the opacity bar and drag to change it; the arrow keys work too.
+
+<img src="docs/settings.png" alt="winBar Windows 11 taskbar settings with Glass theme cards, normal and maximized taskbar previews, and a draggable opacity slider" width="760">
+
 ## What you can customize
 
 | Feature | What it does |
@@ -35,7 +41,7 @@ Settings open in **English** on new installations. Use the language selector at 
 | **Presentation mode** | Hide the right side and selected private app buttons with **Ctrl + Alt + P** while sharing your screen. |
 | **Hide app buttons** | Choose running programs or EXE files whose taskbar buttons should be hidden. Their windows remain open and accessible with Alt + Tab. |
 | **Automatic updates** | Check stable GitHub releases in the background, verify the download, and use the new version on the next normal launch. No forced restart. |
-| **Clear settings** | Navigate between Appearance, Taskbar, Clock, Apps, System area, Layouts, and System. Switch English, German, or system language without restarting. |
+| **Illustrated settings** | Compare normal and Alt views, preview clock styles and display layouts, and drag the opacity bar from anywhere. Appearance, Taskbar, Clock, Apps, System area, Layouts, Help, and Updates each have their own page. Switch English, German, or system language without restarting. |
 
 You can also set taskbar alignment, grouping, auto-hide, Search, Widgets, Copilot, Chat/Teams, the desktop corner, and other Windows taskbar options. Some Windows settings need an Explorer restart before they appear.
 

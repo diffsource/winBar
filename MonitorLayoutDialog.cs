@@ -8,7 +8,7 @@ internal sealed class MonitorLayoutDialog : Form
     readonly CheckBox appearanceEnabled = new();
     readonly ComboBox style = new();
     readonly Button colorButton = new();
-    readonly TrackBar opacity = new();
+    readonly OpacitySlider opacity = new();
     readonly CheckBox autoContrast = new();
     readonly CheckBox appAccent = new();
     readonly CheckBox contextStyle = new();
@@ -179,9 +179,7 @@ internal sealed class MonitorLayoutDialog : Form
             ShowColor();
         };
         Row(panel, 2, "Farbe", colorButton);
-        opacity.Minimum = 0;
-        opacity.Maximum = 255;
-        opacity.TickFrequency = 32;
+        opacity.Dock = DockStyle.Top;
         opacity.ValueChanged += (_, _) =>
         {
             if (!loading && draft != null) draft.Color = (opacity.Value << 24) | (draft.Color & 0xFFFFFF);
